@@ -1,7 +1,7 @@
 // ── Config ────────────────────────────────────────────────────────────────────
 // Change this to your Render backend URL when deploying.
 // Leave empty to use the same origin (only works if frontend and backend are served together).
-const API_BASE = 'http://localhost:5000';
+const API_BASE = 'https://lmu-setup-engineer.onrender.com';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let selectedFile = null;
