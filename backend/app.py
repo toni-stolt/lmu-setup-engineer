@@ -83,6 +83,7 @@ def analyze():
     if len(description) > 1000:
         return jsonify({'error': 'Description too long (max 1000 characters).'}), 400
 
+    track_name = request.form.get('track_name', '').strip()
     lap_index = request.form.get('lap_index')
 
     # --- Save to temp file and parse ---
@@ -127,7 +128,7 @@ def analyze():
     meta = {
         'driver':   ld_file.driver,
         'vehicle':  ld_file.vehicle,
-        'venue':    ld_file.venue,
+        'venue':    track_name if track_name else ld_file.venue,
         'datetime': ld_file.datetime,
     }
 
