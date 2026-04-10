@@ -628,6 +628,32 @@
       color: var(--dim);
     }
 
+    /* ─── Description tips ──────────────────────────────────────────── */
+    .description-tips {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .tips-label {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-right: 2px;
+    }
+
+    .tip {
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--bg-4);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 3px 8px;
+    }
+
     /* ─── Responsive ─────────────────────────────────────────────── */
     @media (max-width: 600px) {
       main { padding: 32px 16px 60px; }
@@ -656,7 +682,7 @@
         </div>
         <div class="logo-text">LMU <span>Setup</span> Engineer</div>
       </div>
-      <div class="header-tag">AI-Powered · GT3 · LMP</div>
+      <div class="header-tag">AI-Powered · Le Mans Ultimate</div>
     </div>
   </header>
 
@@ -667,7 +693,7 @@
     <div class="hero">
       <div class="hero-eyebrow">Telemetry Analysis</div>
       <h1>Setup advice backed<br>by <em>real data.</em></h1>
-      <p>Upload your MoTeC .ld file, describe what the car is doing wrong, and get specific, lap-by-lap setup recommendations from an AI trained on GT3 engineering principles.</p>
+      <p>Upload your MoTeC .ld file, describe what the car is doing wrong, and get specific setup recommendations powered by AI with deep knowledge of Le Mans Ultimate physics and racing car setup across all car classes. The car and track are identified automatically from your telemetry.</p>
     </div>
 
     <!-- Form card -->
@@ -711,13 +737,20 @@
         <div class="card-header-title">Describe the Handling Issue</div>
       </div>
       <div class="card-body">
-        <label class="field-label" for="description">What is the car doing wrong?</label>
+        <label class="field-label" for="description">Describe the handling problem in detail</label>
         <textarea
           id="description"
-          placeholder="e.g. I have understeer on entry in slow corners, especially at Arnage and the Ford Chicanes. The front end doesn't bite when I turn in."
+          placeholder="Be as specific as possible — the more detail you give, the better the advice.&#10;&#10;e.g. I have snap oversteer on the exit of slow-speed corners, particularly at Arnage. It happens when I get back on the throttle at around 80–90 km/h. The rear steps out suddenly with very little warning. It seems worse when the kerbs are involved."
           maxlength="1000"
         ></textarea>
         <div class="char-count" id="charCount">0 / 1000</div>
+        <div class="description-tips">
+          <span class="tips-label">Tips for better results:</span>
+          <span class="tip">Corner speed — low / medium / high</span>
+          <span class="tip">Phase — entry / apex / exit</span>
+          <span class="tip">Type — understeer / oversteer / instability / bouncing</span>
+          <span class="tip">Where — specific corners if known</span>
+        </div>
 
         <div class="error-banner" id="errorBanner"></div>
       </div>
