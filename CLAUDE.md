@@ -5,7 +5,7 @@ An AI-powered setup advisor for Le Mans Ultimate sim racers. Users upload a MoTe
 
 ## Architecture
 - **Backend:** Python / Flask — parses .ld files, extracts telemetry, calls Gemini API
-- **Frontend:** Vanilla HTML/CSS/JS — PWA, hosted on Netlify
+- **Frontend:** Vanilla HTML/CSS/JS — hosted on Netlify (not a PWA, desktop use only)
 - **AI:** Google Gemini free tier
 - **Hosting:** Backend on Render free tier, frontend on Netlify free tier
 - **Auth:** None — anonymous, IP-based rate limit (100 requests/day/IP)
