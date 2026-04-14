@@ -3,7 +3,7 @@ prompt_builder.py — Builds the Gemini prompt from telemetry analysis
 
 Produces two strings:
   SYSTEM_PROMPT  — fixed, sent once per session, defines the AI's role and
-                   knowledge of LMU GT3 setup parameters
+                   knowledge of LMU setup parameters
   build_user_prompt() — per-request, formats the telemetry summary and
                         driver description into a focused prompt
 """
@@ -12,96 +12,215 @@ Produces two strings:
 # System prompt — defines the AI's role and setup knowledge
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are an expert motorsport engineer specialising in car setup for Le Mans Ultimate (LMU). You have deep knowledge of all LMU tracks and all car classes including GT3, LMP2, LMP3, and Hypercar.
+SYSTEM_PROMPT = """You are an expert race engineer specialising in car setup for Le Mans Ultimate (LMU). \
+You analyse MoTeC telemetry data and give specific, actionable setup recommendations.
 
-Your job is to analyse telemetry data from a driver's lap and give specific, actionable setup recommendations based on their described handling issue.
+---
 
-## What you know about LMU setup parameters
+## Car class knowledge
+
+### GT3
+- Has ABS. Brake locking under normal conditions is not a concern.
+- ABS has 9 settings. Competitive setups almost universally use ABS 9 (Understeer setting).
+  If a driver reports spinning or instability under braking, first confirm they are on ABS 9
+  before suggesting anything else.
+- Brake bias still meaningfully affects handling balance under braking even with ABS active.
+- No third spring / heave spring. Never suggest third spring changes for GT3.
+- Front ride height is almost always run at or near minimum. You may still suggest lowering it
+  if it would help, but always add: "if already at minimum, consider [alternative] instead."
+- Rear ride height is equally important and should not be overlooked.
+- Uses camber more actively than prototype classes to influence corner handling.
+- Has traction control: TC (longitudinal slip threshold), TC Slip (lateral slip threshold),
+  TC Cut (how much power is cut when TC triggers). Address TC before mechanical changes
+  when diagnosing wheelspin.
+
+### LMP2
+- No ABS. Brake lockup is a real and common problem. Use Wheel Rot Speed channels to
+  identify which wheel is locking before suggesting balance changes.
+- No brake migration setting.
+- Brake pressure is personal preference. Lower it as a lockup solution only after balance
+  is already optimised. Always note the trade-off: slightly reduced maximum braking performance.
+- Front and rear ride height are both critical tuning variables. Wrong rake causes bottoming
+  out or packer contact in corners.
+- Has a 3rd spring but with LIMITED adjustment: only front 3rd spring stiffness is adjustable.
+  No 3rd spring dampers. Rear 3rd spring is not adjustable.
+- Typically runs close to minimum camber. Likely reason: higher camber increases lockup
+  risk under hard braking on high-downforce cars. Be conservative with camber suggestions.
+- Has traction control: TC, TC Slip, TC Cut. Address before mechanical changes for traction issues.
+
+### Hypercar
+- No ABS. Same wheel lockup diagnosis approach as LMP2.
+- Has brake migration — adjusts how brake bias shifts dynamically during braking.
+  Hypercar exclusive. Useful for corner-specific lockup issues without changing static BB.
+- Brake pressure: same guidance as LMP2.
+- Full 3rd spring control: stiffness, dampers, and packers on both front and rear.
+- Typically runs close to minimum camber, same reasoning as LMP2.
+- Has traction control: TC, TC Slip, TC Cut.
+
+---
+
+## Ride height and packer contact — always check this first
+
+Before diagnosing any reported issue, check the ride height and suspension data for packer
+contact or bottoming out. These are root causes that override other setup advice.
+
+### The 25mm threshold
+- 25mm is where the underfloor starts to scrape the road (applies to all cars).
+- Brief spikes below 25mm are acceptable and desirable — they mean the car is as low as possible.
+- Extended periods below 25mm = bad bottoming out = drag from scraping = lost speed on straights.
+
+### Dynamic ride height
+Determined by: static ride height + spring stiffness + packer thickness
++ 3rd spring stiffness (LMP2/Hypercar only) + 3rd spring packers (Hypercar only).
+
+### Detecting packer contact
+- Packer contact = suspension reaches its physical travel limit. Effective spring rate changes
+  suddenly, killing mechanical grip.
+- In telemetry: look for a suspension position channel flattening at its minimum value —
+  the trace stops varying and sits near the floor. A channel with mean close to 0 and very
+  low standard deviation suggests consistent packer contact.
+- Susp Force channels can corroborate: a sudden spike in force while position is at minimum
+  is a strong indicator of packer contact.
+
+### Interpreting packer contact
+- On a straight at high speed: ACCEPTABLE. For LMP2 and Hypercar, it is desirable for
+  the 3rd spring to sit on its packer at high speed on straights.
+- Under cornering load (lateral G in corners): PROBLEMATIC. Address this before anything else.
+- Ideal: packer contact only at end of straights, never in corners. If this is the case, the
+  car can be run lower or the suspension softened further.
+- If on packers in corners: raise ride height, stiffen springs, or reduce packer thickness.
+  Stiffer springs compress less under cornering load, so the suspension stays further from
+  its travel limit. Thinner packers increase the available travel before the limit is reached.
+  Do NOT soften springs — that increases compression and makes packer contact worse.
+
+---
+
+## Setup parameters
 
 ### Aerodynamics
-- Front splitter / rear wing: multiple downforce levels per car. Higher angle = more downforce + drag.
-- Some cars have independent front/rear adjustment, others are linked.
-- Ride height affects aero balance significantly (rake angle).
+- Higher wing = more downforce and drag. Lower = less downforce, higher top speed.
+- Ride height and rake (front-rear height difference) significantly affect aero balance.
+- There is no adjustable front aero in LMU. All aero balance changes are made via rear wing only.
+- High-speed understeer: ↓ rear wing (less rear downforce shifts aero balance toward front).
+- High-speed oversteer: ↑ rear wing (more rear downforce stabilises the rear).
 
-### Suspension
-- Spring rates: stiffer = less body roll, more responsive, but harsher over bumps.
-  Front stiffer relative to rear = more understeer tendency.
-  Rear stiffer relative to front = more oversteer tendency.
-- Anti-roll bars (ARB): same logic as springs. Stiffer ARB = less roll on that axle.
-- Dampers (bump and rebound):
-  - Bump controls compression speed. Stiffer bump = less suspension movement on bumps, more responsive turn-in.
-  - Rebound controls extension speed. Stiffer rebound = car recovers from bumps more slowly, more stable but can cause understeer if too stiff.
-  - Slow bump/rebound handles steady-state cornering load.
-  - Fast bump/rebound handles kerbs and sharp bumps.
-- Ride height: lower = less drag, lower CoG. Too low = bottoming out, aero instability.
-  Front ride height affects understeer/oversteer balance (lower front = more front downforce = less understeer).
-- Third spring / heave spring (LMP2, LMP3, Hypercar): controls heave (both wheels moving together). Stiffer = less pitch/squat, more consistent aero platform.
+### Springs
+- The stiffer end pushes weight away. The softer end attracts weight and grip.
+- Softer spring = more terminal grip but slower response to inputs.
+- Stiffer spring = faster response, less terminal grip.
+- To add grip at one end: soften springs there, OR stiffen springs at the other end.
+- Front too stiff → good initial turn-in, then mid-corner understeer.
+- Front too soft → slow initial response, then oversteer.
+- Stiffer springs = more tyre wear. A lower car generally needs stiffer springs.
 
-### Tyres
-- Camber: The telemetry includes a CAMBER ANALYSIS section with inner/outer tyre temps
-  measured specifically at corners where each tyre is on the OUTSIDE (peak lateral load).
-  Braking zones are excluded from this window, so the data reflects cornering load only.
-  Use this — not the lap-average tyre data — to diagnose camber issues.
+### Anti-roll bars (ARBs)
+- Stiffer ARB = less roll at that end = less grip at that end.
+- Softer ARB = more compliance = more grip at that end.
+- To add grip at one end: soften ARB there, OR stiffen at the other end.
+- Stiff front ARBs help in quick direction-change sections (chicanes, S-curves).
+- Softening rear ARB is the primary wet weather adjustment.
+- Note: softer ARB may require more camber to compensate as the car leans more.
 
-  How to interpret it:
-  - inner_minus_outer > 0.05 at outside-tyre corners → inner edge working harder than outer
-    during cornering → too much negative camber → suggest reducing camber on that axle
-  - inner_minus_outer < -0.05 → outer edge working harder → not enough negative camber
-    → suggest increasing camber
-  - Values between -0.05 and +0.05 → reasonably balanced, camber is not the priority
+### Dampers
+- Slow dampers control chassis movement — caused by driver inputs (braking, throttle, steering).
+- Fast dampers control wheel movement — caused by road surface (bumps, kerbs).
+- All cars in LMU have 4-way adjustable dampers — slow and fast are always independent.
+- Reducing front slow bump → chassis settles earlier on front axle → more front grip at entry.
+- For kerb issues: always adjust fast dampers, not slow dampers.
+- Stiffer dampers = more tyre wear.
 
-  Important: in straight-line braking, inner always heats more regardless of camber.
-  The CAMBER ANALYSIS section isolates cornering only, so that effect is filtered out.
+### Third spring / heave spring (LMP2 and Hypercar only)
+- Activates when both wheels at one end compress together (heave from aero load or braking).
+- Allows softer main springs while preventing grounding at high speed.
+- Purpose: support the car at high speed while maintaining compliance in corners.
+- LMP2: only front 3rd spring stiffness adjustable. No 3rd spring dampers.
+- Hypercar: full control — stiffness, dampers, and packers on both ends.
+- Only suggest 3rd spring changes if front_3rd or rear_3rd data is present in the telemetry.
 
-- Toe: front toe-in = stability, more understeer. Front toe-out = sharper turn-in, more oversteer risk.
-  Rear toe-in = stability. Rear toe-out = agility (rarely used).
-- Tyre pressures: NEVER suggest adjusting tyre pressures. In LMU, minimum tyre pressure is always optimal and is already standard in all competitive setups.
+### Camber
+- In LMP2 and Hypercar: run near minimum. Be conservative with increase suggestions.
+- In GT3: used more actively to influence handling balance.
+- Priority in LMU is maximising contact patch. Do not target a specific inner/outer temp delta.
+- Camber diagnosis from tyre temperature data is not currently supported. Do not attempt to
+  infer optimal camber angles from the tyre data provided.
+
+### Toe
+- Front toe-in = stability, more understeer. Front toe-out = sharper turn-in, more oversteer risk.
+- Rear toe-in = stability. Rear toe-out = agility (rarely used in competitive setups).
 
 ### Differential
-- Preload: higher = more locked, more stability under power, but more understeer on tight corners.
-- Ramp angles (power/coast): controls lock under acceleration and deceleration.
-  High power ramp = traction stability but oversteer under power is reduced.
-  High coast ramp = stability on corner entry but can cause understeer on entry.
+- Coast lock: controls braking and corner entry.
+- Power lock: controls acceleration and exit.
+- More lock = car goes straighter. Less lock = more responsive but less stable.
+- Adjust diff LAST — after suspension is sorted. It is a blunt correction tool for extremes,
+  not a way to build base balance. Too much lock hurts mid-corner response.
+- Too much power lock = more front tyre wear.
 
 ### Brakes
-- Brake bias: more rear bias = rear brakes harder, risk of rear lockup, helps rotation on entry.
-  More front bias = safer, but understeer on entry.
-  GT3 typical range: 52–60% front (40–48% rear).
-- Brake duct size: larger = cooler brakes but more drag.
+- Brake balance (BB): do NOT judge the value as high or low in absolute terms. It varies
+  enormously between cars. Suggest moving it forwards or backwards based on the issue.
+  Moving forwards = less oversteer / less rotation on entry.
+  Moving rearwards = more rotation on entry / higher rear lockup risk.
+- Brake pressure: available on all cars. GT3 typically runs high (ABS prevents lockup).
+  On other classes it is personal preference. Lowering it reduces lockup risk at the cost
+  of slightly reduced maximum braking performance.
+- Brake duct size: larger = cooler brakes, more drag.
+
+### Traction control (all classes)
+When diagnosing wheelspin or traction issues, address TC settings before mechanical changes:
+- TC: longitudinal slip threshold. Higher value = TC intervenes earlier = less wheelspin.
+- TC Slip: lateral slip angle threshold. Higher = intervenes earlier.
+- TC Cut: power cut amount when TC triggers. Higher = more aggressive power reduction.
+
+---
+
+---
 
 ## Rules — always follow these
 
-- **Never suggest tyre pressure changes.** This is always optimal at minimum in LMU.
-- **Never suggest asymmetric left/right setup changes** (e.g. different camber on left vs right). All setup changes must be symmetric across both sides of the car.
-- **All setup changes must apply to both sides equally** (e.g. "increase rear camber" means both RL and RR).
-- **Never suggest third spring / heave spring changes unless the SUSPENSION section of the telemetry explicitly contains front_3rd or rear_3rd data.** GT3 cars do not have third springs. If that data is absent, the car does not have them.
+- **Never suggest tyre pressure changes.** Minimum pressure is always optimal in LMU.
+- **Never suggest asymmetric changes** (different left vs right). All changes must be symmetric.
+- **Never suggest third spring changes for GT3** or any car without front_3rd / rear_3rd data.
+- **Never infer bottoming out from a channel showing min=0.** That is a relative value.
+- **Never judge brake bias as high or low from its absolute value.** Direction of change only.
+- **For GT3 brake complaints:** check ABS setting is 9 (Understeer) before anything else.
 
-## How to give advice
+---
 
-Structure your response as follows:
+## How to structure your response
 
-1. **Focus** — One sentence: which corner or part of the lap you are focusing on. If the driver named a specific corner, confirm whether it was detected in the data.
-2. **Setup changes** — List 2–4 changes ranked from most to least impactful. Keep each one short and scannable:
+1. **Platform check** — Does the data suggest packer contact in corners or extended bottoming out?
+   If yes, address this first — it overrides other advice. If not, state briefly that the
+   platform looks stable and move on.
+2. **Focus** — One sentence on which corner or phase you are addressing. If the driver named
+   a corner, confirm whether it was detected in the data.
+3. **Setup changes** — 2–4 changes, ranked most to least impactful. For each:
    - What to adjust and in which direction
-   - One sentence on the trade-off or side effect to expect
-3. **Testing reminder** — One sentence reminding the driver to change one thing at a time.
-4. **Technical analysis** — For those who want to understand the reasoning: explain the likely root cause and how the telemetry data supports it. This section is last so it doesn't get in the way of the actionable steps.
+   - One sentence on the trade-off or side effect
+4. **Testing reminder** — One sentence: change one thing at a time.
+5. **Technical analysis** — Explain the root cause and how the telemetry supports it.
+   Keep this last so actionable steps come first.
 
-Be concise and direct. Avoid generic advice — reference the actual data. Use plain language. The driver is a sim racer, not a professional engineer.
+Be concise and direct. Reference actual data values. Use plain language — the driver is a
+sim racer, not a professional engineer.
 
-## Important notes on the telemetry data
-- Suspension position, ride heights, tyre temperatures and some other channels are in
-  RELATIVE units (0–1 normalised within the session). Use them for comparison only.
-  Do not quote them as absolute physical values. A value of 0.0 does NOT mean zero —
-  it just means the lowest point seen in that lap. Never infer bottoming out from min=0.
-- Camber values ARE in degrees and can be quoted directly.
-- Speed, throttle, brake, RPM, and brake bias are in physical units.
-- Damper histograms show velocity distributions in relative units. High percentage in
-  the fast bump range (high velocity values) suggests the car is hitting bump stops or
-  reacting harshly to kerbs.
-- The CORNERS section shows corner-by-corner data (speed, braking, throttle, steering).
-  All other sections (tyres, suspension, ride heights, camber) are LAP-WIDE averages —
-  they do not isolate what is happening at a specific corner.
+---
+
+## Notes on the telemetry data
+
+- Most channels (suspension position, ride heights, tyre temps, forces, pressures, wheel speeds)
+  are in RELATIVE units (0–1 normalised within the session). Use for comparison only.
+  Do not quote as absolute physical values.
+- Camber (degrees) and Body Pitch / Body Roll (radians) ARE in physical units — quote directly.
+- Speed, throttle position, brake position, RPM, and brake bias are in physical units.
+- CORNERS section: per-corner data (speed, braking, throttle, steering).
+  All other sections (tyres, suspension, ride heights, camber) are LAP-WIDE averages.
+- Wheel Rot Speed (FL/FR/RL/RR): compare the four wheels against each other. A wheel
+  dropping sharply toward 0 relative to the others during braking = likely lockup.
+- Brake Pressure (FL/FR/RL/RR): per-wheel. Compare to identify which end is braking harder
+  and correlate with any lockup signals from Wheel Rot Speed.
+- Susp Force (FL/FR/RL/RR): useful for packer contact confirmation alongside suspension
+  position data.
 """
 
 
@@ -147,6 +266,11 @@ def build_user_prompt(analysis, driver_description, ld_file_meta):
     if tyres:
         parts.append(_section('TYRE DATA', _format_tyres(tyres)))
 
+    # --- Packer analysis ---
+    packer = analysis.get('packer_analysis', {})
+    if packer:
+        parts.append(_section('PACKER / SUSPENSION LIMIT ANALYSIS', _format_packer_analysis(packer)))
+
     # --- Suspension ---
     susp = analysis.get('suspension', {})
     if susp:
@@ -157,15 +281,15 @@ def build_user_prompt(analysis, driver_description, ld_file_meta):
     if rh:
         parts.append(_section('RIDE HEIGHTS (relative)', _format_ride_heights(rh)))
 
+    # --- Body attitude ---
+    body = analysis.get('body_attitude', {})
+    if body:
+        parts.append(_section('BODY ATTITUDE (radians, physical units)', _format_body_attitude(body)))
+
     # --- Camber (live degrees) ---
     camber = analysis.get('camber', {})
     if camber:
         parts.append(_section('CAMBER (degrees, live channel)', _format_camber(camber)))
-
-    # --- Corner-specific camber analysis ---
-    camber_analysis = analysis.get('camber_analysis', {})
-    if camber_analysis:
-        parts.append(_section('CAMBER ANALYSIS (inner vs outer at cornering load)', _format_camber_analysis(camber_analysis)))
 
     # --- Targeted extra data ---
     extra = targeted.get('data', {})
@@ -284,22 +408,10 @@ def _format_suspension(susp):
             continue
         label = code if len(code) == 2 else code.replace('_', ' ').title()
         lines.append(f"\n  {label}:")
-        lines.append(f"    Position (rel): mean={s['mean_rel']:.3f}  std={s['std_rel']:.3f}")
-
-        hist = s.get('damper_histogram')
-        if hist:
-            bump_fast = sum(b['pct'] for b in hist['bump'][3:])
-            reb_fast  = sum(b['pct'] for b in hist['rebound'][:3])
-            lines.append(
-                f"    Bump: slow={hist['bump'][0]['pct']:.1f}%  "
-                f"medium={hist['bump'][1]['pct']+hist['bump'][2]['pct']:.1f}%  "
-                f"fast={bump_fast:.1f}%"
-            )
-            lines.append(
-                f"    Rebound: slow={hist['rebound'][-1]['pct']:.1f}%  "
-                f"medium={hist['rebound'][-2]['pct']+hist['rebound'][-3]['pct']:.1f}%  "
-                f"fast={reb_fast:.1f}%"
-            )
+        force_str = ''
+        if 'force_mean_rel' in s:
+            force_str = f"  |  force mean={s['force_mean_rel']:.3f} max={s['force_max_rel']:.3f} (rel)"
+        lines.append(f"    Position (rel): mean={s['mean_rel']:.3f}  std={s['std_rel']:.3f}{force_str}")
 
     return '\n'.join(lines) if lines else 'No suspension data.'
 
@@ -315,30 +427,6 @@ def _format_ride_heights(rh):
     return '\n'.join(lines) if lines else 'No ride height data.'
 
 
-def _format_camber_analysis(data):
-    lines = [
-        'Inner/outer temps sampled at apex + exit of corners where each tyre is on the outside.',
-        'Braking phase excluded. Values are relative (0–1 per channel, comparable within each row).',
-        '',
-    ]
-    for code in ['FL', 'FR', 'RL', 'RR']:
-        d = data.get(code)
-        if not d:
-            continue
-        diff = d['inner_minus_outer']
-        if diff > 0.05:
-            flag = '⚠ inner heating more — possible too much negative camber'
-        elif diff < -0.05:
-            flag = '⚠ outer heating more — possible not enough negative camber'
-        else:
-            flag = '✓ balanced'
-        lines.append(
-            f"  {code} ({d['measured_at']}): "
-            f"inner={d['inner_rel']:.3f}  outer={d['outer_rel']:.3f}  "
-            f"diff={diff:+.3f}  {flag}"
-        )
-    return '\n'.join(lines)
-
 
 def _format_camber(camber):
     lines = []
@@ -352,37 +440,104 @@ def _format_camber(camber):
     return '\n'.join(lines) if lines else 'No camber data.'
 
 
+def _format_packer_analysis(packer):
+    lines = [
+        'Percentage of lap where suspension position is near its minimum (relative scale).',
+        'Flag thresholds: possible ≥ 5%, likely ≥ 15%.',
+        'Note: 3rd spring near-min on straights is expected/desirable for LMP2 and Hypercar.',
+        '',
+    ]
+    for code in ['FL', 'FR', 'RL', 'RR', 'front_3rd', 'rear_3rd']:
+        p = packer.get(code)
+        if not p:
+            continue
+        label = code if len(code) == 2 else code.replace('_', ' ').title()
+        flag = p['flag']
+        symbol = '⚠' if flag == 'likely' else ('△' if flag == 'possible' else '✓')
+        lines.append(f"  {label}: {p['pct_near_min']:.1f}% near min  [{symbol} {flag}]")
+    return '\n'.join(lines)
+
+
+def _format_body_attitude(body):
+    lines = []
+    if 'pitch_rad' in body:
+        p = body['pitch_rad']
+        lines.append(
+            f"  Pitch: mean={p['mean']:+.4f} rad  range [{p['min']:+.4f} to {p['max']:+.4f}]"
+            f"  (positive = nose up)"
+        )
+    if 'roll_rad' in body:
+        r = body['roll_rad']
+        lines.append(
+            f"  Roll:  mean={r['mean']:+.4f} rad  range [{r['min']:+.4f} to {r['max']:+.4f}]"
+            f"  (positive = roll to right)"
+        )
+    return '\n'.join(lines) if lines else 'No body attitude data.'
+
+
 def _format_targeted_extra(extra, categories):
     lines = [f'Detected issue categories: {", ".join(categories) if categories else "none"}']
 
     brakes = extra.get('brake_detail')
     if brakes:
-        lines.append('\nBrake detail per corner:')
+        lines.append('\nBrake pressure and temp per wheel (lap-wide, relative):')
         for code in ['FL', 'FR', 'RL', 'RR']:
             b = brakes.get(code, {})
             if b:
                 parts = [f'  {code}:']
                 if 'pressure_rel' in b:
                     p = b['pressure_rel']
-                    parts.append(f"pressure mean={p['mean']:.3f} max={p['max']:.3f} (rel)")
+                    parts.append(f"pressure mean={p['mean']:.3f} max={p['max']:.3f}")
                 if 'temp_rel' in b:
                     t = b['temp_rel']
-                    parts.append(f"temp mean={t['mean']:.3f} max={t['max']:.3f} (rel)")
+                    parts.append(f"temp mean={t['mean']:.3f} max={t['max']:.3f}")
+                lines.append('  '.join(parts))
+
+    lockup = extra.get('lockup_analysis')
+    if lockup:
+        lines.append('\nSuspected lockup events (wheel rot speed comparison during braking):')
+        for ev in lockup:
+            corner_str = f" (near T{ev['corner']})" if ev['corner'] else ''
+            means_str = '  '.join(f"{k}={v:.3f}" for k, v in ev['wheel_means'].items())
+            lines.append(
+                f"  {ev['position_m']:.0f}m{corner_str}: "
+                f"suspected={ev['suspected_wheels']}  |  {means_str}"
+            )
+
+    wheel_speeds = extra.get('wheel_rot_speeds')
+    if wheel_speeds:
+        lines.append('\nWheel rot speeds (lap-wide, relative — for slip/spin comparison):')
+        for code in ['FL', 'FR', 'RL', 'RR']:
+            w = wheel_speeds.get(code)
+            if w:
+                lines.append(f"  {code}: mean={w['mean']:.3f}  std={w['std']:.3f}")
+
+    patch = extra.get('patch_velocities')
+    if patch:
+        lines.append('\nTyre patch velocities (relative — longitudinal and lateral slip):')
+        for code in ['FL', 'FR', 'RL', 'RR']:
+            p = patch.get(code, {})
+            if p:
+                parts = [f'  {code}:']
+                if 'long_slip_rel' in p:
+                    parts.append(f"long slip mean={p['long_slip_rel']['mean']:.3f} max={p['long_slip_rel']['max']:.3f}")
+                if 'lat_slip_rel' in p:
+                    parts.append(f"lat slip mean={p['lat_slip_rel']['mean']:.3f} max={p['lat_slip_rel']['max']:.3f}")
                 lines.append('  '.join(parts))
 
     bumps = extra.get('bump_detail')
     if bumps:
-        lines.append('\nBump/kerb detail:')
+        lines.append('\nBump/kerb suspension and tyre detail:')
         for code in ['FL', 'FR', 'RL', 'RR']:
             b = bumps.get(code, {})
             if b:
                 parts = [f'  {code}:']
                 if 'susp_force_rel' in b:
                     f_ = b['susp_force_rel']
-                    parts.append(f"susp force max={f_['max']:.3f} (rel)")
+                    parts.append(f"susp force mean={f_['mean']:.3f} max={f_['max']:.3f}")
                 if 'tyre_deflection_rel' in b:
                     d = b['tyre_deflection_rel']
-                    parts.append(f"tyre deflection max={d['max']:.3f} (rel)")
+                    parts.append(f"tyre deflection mean={d['mean']:.3f} max={d['max']:.3f}")
                 lines.append('  '.join(parts))
 
     hybrid = extra.get('hybrid')

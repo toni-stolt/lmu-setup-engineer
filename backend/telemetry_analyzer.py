@@ -212,43 +212,8 @@ def tyre_summary(lap):
 # Suspension / damper analysis
 # ---------------------------------------------------------------------------
 
-def _damper_histogram(susp_pos_data, freq, n_bins=10):
-    """
-    Compute a damper velocity histogram from suspension position data.
-
-    Damper velocity = rate of change of suspension position (mm/s equivalent).
-    Positive = bump (compression), Negative = rebound (extension).
-    Returns separate bump and rebound histograms as percentage distributions.
-    """
-    if susp_pos_data is None or len(susp_pos_data) < 2:
-        return None
-
-    # Velocity = diff of position × freq (samples per second)
-    vel = np.diff(susp_pos_data) * freq
-
-    bump    = vel[vel > 0]
-    rebound = vel[vel < 0]
-
-    def histogram_pct(data, n_bins):
-        if len(data) == 0:
-            return []
-        counts, edges = np.histogram(data, bins=n_bins)
-        pct = counts / counts.sum() * 100
-        return [
-            {'range': [round(float(edges[i]), 4), round(float(edges[i+1]), 4)],
-             'pct':   round(float(pct[i]), 1)}
-            for i in range(len(pct))
-        ]
-
-    return {
-        'bump':    histogram_pct(bump, n_bins),
-        'rebound': histogram_pct(rebound, n_bins),
-        'note': 'Velocity values are in normalised units/s (awaiting physical calibration).'
-    }
-
-
 def suspension_summary(lap):
-    """Return suspension position stats and damper histograms for all corners."""
+    """Return suspension position stats and suspension forces."""
     result = {}
 
     for code in ['FL', 'FR', 'RL', 'RR']:
@@ -256,14 +221,17 @@ def suspension_summary(lap):
         if ch is None or ch.is_flat:
             continue
         d = ch.data
-        hist = _damper_histogram(d, ch.freq)
-        result[code] = {
+        entry = {
             'mean_rel': round(float(np.mean(d)), 3),
             'std_rel':  round(float(np.std(d)), 3),
-            'damper_histogram': hist,
         }
+        force_ch = lap.ch(f'Susp Force {code}')
+        if force_ch and not force_ch.is_flat:
+            entry['force_mean_rel'] = round(float(np.mean(force_ch.data)), 3)
+            entry['force_max_rel']  = round(float(np.max(force_ch.data)), 3)
+        result[code] = entry
 
-    # Third spring elements (relevant for LMP2, LMP3, Hypercar)
+    # Third spring elements (LMP2, Hypercar)
     for label, ch_name in [('front_3rd', 'Front 3rd Pos'), ('rear_3rd', 'Rear 3rd Pos')]:
         ch = lap.ch(ch_name)
         if ch and not ch.is_flat:
@@ -271,8 +239,51 @@ def suspension_summary(lap):
             result[label] = {
                 'mean_rel': round(float(np.mean(d)), 3),
                 'std_rel':  round(float(np.std(d)), 3),
-                'damper_histogram': _damper_histogram(d, ch.freq),
             }
+
+    return result
+
+
+def packer_analysis(lap, suspension_data):
+    """
+    Detect likely packer contact by analysing how much time each suspension
+    channel spends near its minimum value.
+
+    Uses the relative (0-1) suspension position data already computed in
+    suspension_summary. A channel spending significant time near 0 suggests
+    the suspension is consistently at or near its travel limit (packer contact).
+
+    Returns a dict per corner and per 3rd spring with:
+      pct_near_min  — % of lap where channel value < PCT_THRESHOLD
+      flag          — 'likely' / 'possible' / 'none'
+    """
+    PCT_THRESHOLD = 0.10   # below this = "near minimum"
+    FLAG_LIKELY   = 15.0   # % time near min to call it likely packer contact
+    FLAG_POSSIBLE = 5.0    # % time near min to call it possible
+
+    result = {}
+
+    channels = {
+        'FL': 'Susp Pos FL', 'FR': 'Susp Pos FR',
+        'RL': 'Susp Pos RL', 'RR': 'Susp Pos RR',
+        'front_3rd': 'Front 3rd Pos', 'rear_3rd': 'Rear 3rd Pos',
+    }
+
+    for label, ch_name in channels.items():
+        ch = lap.ch(ch_name)
+        if ch is None or ch.is_flat:
+            continue
+        pct = float(np.mean(ch.data < PCT_THRESHOLD) * 100)
+        if pct >= FLAG_LIKELY:
+            flag = 'likely'
+        elif pct >= FLAG_POSSIBLE:
+            flag = 'possible'
+        else:
+            flag = 'none'
+        result[label] = {
+            'pct_near_min': round(pct, 1),
+            'flag': flag,
+        }
 
     return result
 
@@ -290,77 +301,6 @@ def ride_height_summary(lap):
                 'mean_rel': round(float(np.mean(ch.data)), 3),
                 'std_rel':  round(float(np.std(ch.data)), 3),
             }
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Corner-specific camber analysis
-# ---------------------------------------------------------------------------
-
-def camber_analysis(lap, corners):
-    """
-    For each tyre, compute mean inner/outer temps specifically at corners
-    where that tyre is on the OUTSIDE (under peak lateral load).
-
-    Right-hand corners: FL and RL are the outside tyres.
-    Left-hand corners:  FR and RR are the outside tyres.
-
-    Straight-line braking sections are excluded — inner heating during braking
-    is normal and should not be interpreted as a camber problem.
-
-    Values are relative (each channel normalised 0–1 independently).
-    Comparing inner vs outer within the same window is directionally valid:
-    inner > outer during cornering → too much negative camber.
-    outer > inner during cornering → not enough negative camber.
-    """
-    speed_ch = lap.ch('Ground Speed')
-    dist_ch  = lap.ch('Lap Distance')
-    if speed_ch is None or dist_ch is None or not corners:
-        return {}
-
-    n    = len(speed_ch.data)
-    freq = speed_ch.freq
-    dist = _resample(dist_ch.data, n)
-
-    right_corners = [c for c in corners if c['direction'] == 'right']
-    left_corners  = [c for c in corners if c['direction'] == 'left']
-
-    def _mean_temp_at_corners(code, zone, corner_list):
-        ch = lap.ch(f'Tyre Rubber Temp {code} {zone}')
-        if ch is None or ch.is_flat or not corner_list:
-            return None
-        resampled = _resample(ch.data, n)
-        vals = []
-        for corner in corner_list:
-            apex_idx = int(np.argmin(np.abs(dist - corner['position_m'])))
-            # Window: start just after braking ends (~0.2s before apex) to ~0.8s after
-            pre  = int(freq * 0.2)
-            post = int(freq * 0.8)
-            s = max(0, apex_idx - pre)
-            e = min(n, apex_idx + post)
-            vals.append(float(np.mean(resampled[s:e])))
-        return round(float(np.mean(vals)), 3) if vals else None
-
-    result = {}
-
-    # FL, RL — outside tyre at right-hand corners
-    for code, corner_list, label in [
-        ('FL', right_corners, 'right'),
-        ('RL', right_corners, 'right'),
-        ('FR', left_corners,  'left'),
-        ('RR', left_corners,  'left'),
-    ]:
-        inner = _mean_temp_at_corners(code, 'I', corner_list)
-        outer = _mean_temp_at_corners(code, 'O', corner_list)
-        if inner is not None and outer is not None:
-            diff = round(inner - outer, 3)
-            result[code] = {
-                'measured_at': f'{label}-hand corners ({len(corner_list)} corners)',
-                'inner_rel': inner,
-                'outer_rel': outer,
-                'inner_minus_outer': diff,
-            }
-
     return result
 
 
@@ -415,17 +355,30 @@ def base_summary(lap):
     # --- Corners ---
     result['corners'] = detect_corners(lap)
 
-    # --- Corner-specific camber analysis ---
-    result['camber_analysis'] = camber_analysis(lap, result['corners'])
-
     # --- Tyres ---
     result['tyres'] = tyre_summary(lap)
 
     # --- Suspension / dampers ---
     result['suspension'] = suspension_summary(lap)
 
+    # --- Packer contact analysis ---
+    result['packer_analysis'] = packer_analysis(lap, result['suspension'])
+
     # --- Ride heights ---
     result['ride_heights'] = ride_height_summary(lap)
+
+    # --- Body attitude (physical units: radians) ---
+    body = {}
+    for ch_name, key in [('Body Pitch', 'pitch_rad'), ('Body Roll', 'roll_rad')]:
+        ch = lap.ch(ch_name)
+        if ch and not ch.is_flat:
+            body[key] = {
+                'mean': round(float(np.mean(ch.data)), 4),
+                'min':  round(float(np.min(ch.data)), 4),
+                'max':  round(float(np.max(ch.data)), 4),
+            }
+    if body:
+        result['body_attitude'] = body
 
     # --- Camber (live, from 100Hz channel) ---
     camber = {}
@@ -529,6 +482,83 @@ def _detect_speed_class(description):
     return None
 
 
+def _lockup_detection(lap, corners):
+    """
+    Detect likely wheel lockups during braking events.
+
+    During hard braking (brake_pos > 20%), compare all four Wheel Rot Speed
+    channels. A wheel whose mean value during a braking zone is significantly
+    lower than the other three is likely locking.
+
+    Returns a list of events, each with:
+      position_m       — track position where braking started
+      corner           — nearest corner number (if within 300m)
+      suspected_wheels — list of wheel codes that appear to be locking
+      wheel_means      — mean rot speed for each wheel during the event (relative)
+    """
+    brake_ch = lap.ch('Brake Pos')
+    speed_ch = lap.ch('Ground Speed')
+    dist_ch  = lap.ch('Lap Distance')
+
+    wheel_chs = {code: lap.ch(f'Wheel Rot Speed {code}') for code in ['FL', 'FR', 'RL', 'RR']}
+    if not all([brake_ch, speed_ch, dist_ch]) or not all(wheel_chs.values()):
+        return []
+
+    n     = len(speed_ch.data)
+    brake = _resample(brake_ch.data, n)
+    dist  = _resample(dist_ch.data, n)
+    wheels = {code: _resample(ch.data, n) for code, ch in wheel_chs.items() if not ch.is_flat}
+
+    if len(wheels) < 4:
+        return []
+
+    BRAKE_THRESHOLD   = 20.0   # % brake application to count as hard braking
+    MIN_ZONE_SAMPLES  = 10     # ignore very brief brake applications
+    LOCKUP_RATIO      = 0.60   # wheel mean below 60% of the other-three mean = suspect lockup
+
+    events = []
+    in_brake   = False
+    zone_start = 0
+
+    for i in range(n):
+        if brake[i] > BRAKE_THRESHOLD and not in_brake:
+            in_brake   = True
+            zone_start = i
+        elif brake[i] <= BRAKE_THRESHOLD and in_brake:
+            in_brake = False
+            zone_end = i
+
+            if zone_end - zone_start < MIN_ZONE_SAMPLES:
+                continue
+
+            means = {code: float(np.mean(wheels[code][zone_start:zone_end]))
+                     for code in wheels}
+
+            suspected = []
+            for code, val in means.items():
+                others_mean = np.mean([v for k, v in means.items() if k != code])
+                if others_mean > 0.05 and val < others_mean * LOCKUP_RATIO:
+                    suspected.append(code)
+
+            if suspected:
+                pos = float(dist[zone_start])
+                nearest = None
+                if corners:
+                    dists = [abs(c['position_m'] - pos) for c in corners]
+                    idx = int(np.argmin(dists))
+                    if dists[idx] < 300:
+                        nearest = corners[idx]['number']
+
+                events.append({
+                    'position_m':      round(pos, 0),
+                    'corner':          nearest,
+                    'suspected_wheels': suspected,
+                    'wheel_means':     {k: round(v, 3) for k, v in means.items()},
+                })
+
+    return events
+
+
 def targeted_analysis(lap, description, corners, base):
     """
     Extract additional targeted data based on the issue description.
@@ -563,53 +593,88 @@ def targeted_analysis(lap, description, corners, base):
 
     result['relevant_corners'] = relevant_corners
 
-    # --- Oversteer / understeer: add wheel speed differential ---
-    if 'oversteer' in categories or 'understeer' in categories or 'traction' in categories:
+    # --- Oversteer / understeer: wheel speed differential ---
+    if 'oversteer' in categories or 'understeer' in categories:
         wheel_data = {}
-        for corner in ['FL', 'FR', 'RL', 'RR']:
-            ch = lap.ch(f'Wheel Rot Speed {corner}')
+        for code in ['FL', 'FR', 'RL', 'RR']:
+            ch = lap.ch(f'Wheel Rot Speed {code}')
             if ch and not ch.is_flat:
-                wheel_data[corner] = {
-                    'mean': round(ch.stats()['mean'], 2),
-                    'max':  round(ch.stats()['max'], 2),
-                    'std':  round(ch.stats()['std'], 2),
+                wheel_data[code] = {
+                    'mean': round(ch.stats()['mean'], 3),
+                    'std':  round(ch.stats()['std'], 3),
                 }
         if wheel_data:
             result['data']['wheel_rot_speeds'] = wheel_data
 
-    # --- Braking: add brake pressure and brake temps ---
+    # --- Braking: per-wheel brake pressure, temps, and lockup detection ---
     if 'braking' in categories:
         brake_data = {}
-        for corner in ['FL', 'FR', 'RL', 'RR']:
-            pressure = lap.ch(f'Brake Pressure {corner}')
-            temp     = lap.ch(f'Brake Temp {corner}')
-            brake_data[corner] = {}
+        for code in ['FL', 'FR', 'RL', 'RR']:
+            pressure = lap.ch(f'Brake Pressure {code}')
+            temp     = lap.ch(f'Brake Temp {code}')
+            brake_data[code] = {}
             if pressure and not pressure.is_flat:
-                brake_data[corner]['pressure_rel'] = {
+                brake_data[code]['pressure_rel'] = {
                     'mean': round(pressure.stats()['mean'], 3),
                     'max':  round(pressure.stats()['max'], 3),
                 }
             if temp and not temp.is_flat:
-                brake_data[corner]['temp_rel'] = {
+                brake_data[code]['temp_rel'] = {
                     'mean': round(temp.stats()['mean'], 3),
                     'max':  round(temp.stats()['max'], 3),
                 }
         result['data']['brake_detail'] = brake_data
 
-    # --- Bumps: add suspension force and vertical tyre deflection ---
+        # Lockup detection: compare wheel rot speeds during hard braking events
+        lockup = _lockup_detection(lap, relevant_corners)
+        if lockup:
+            result['data']['lockup_analysis'] = lockup
+
+    # --- Traction: wheel rot speeds + longitudinal/lateral patch velocities ---
+    if 'traction' in categories:
+        wheel_data = {}
+        for code in ['FL', 'FR', 'RL', 'RR']:
+            ch = lap.ch(f'Wheel Rot Speed {code}')
+            if ch and not ch.is_flat:
+                wheel_data[code] = {
+                    'mean': round(ch.stats()['mean'], 3),
+                    'std':  round(ch.stats()['std'], 3),
+                }
+        if wheel_data:
+            result['data']['wheel_rot_speeds'] = wheel_data
+
+        patch_data = {}
+        for code in ['FL', 'FR', 'RL', 'RR']:
+            long_ch = lap.ch(f'Long Patch Vel {code}')
+            lat_ch  = lap.ch(f'Lat Patch Vel {code}')
+            patch_data[code] = {}
+            if long_ch and not long_ch.is_flat:
+                patch_data[code]['long_slip_rel'] = {
+                    'mean': round(long_ch.stats()['mean'], 3),
+                    'max':  round(long_ch.stats()['max'], 3),
+                }
+            if lat_ch and not lat_ch.is_flat:
+                patch_data[code]['lat_slip_rel'] = {
+                    'mean': round(lat_ch.stats()['mean'], 3),
+                    'max':  round(lat_ch.stats()['max'], 3),
+                }
+        if any(patch_data[k] for k in patch_data):
+            result['data']['patch_velocities'] = patch_data
+
+    # --- Bumps: suspension force and vertical tyre deflection ---
     if 'bumps' in categories:
         bump_data = {}
-        for corner in ['FL', 'FR', 'RL', 'RR']:
-            force = lap.ch(f'Susp Force {corner}')
-            defl  = lap.ch(f'Vertical Tyre Deflection {corner}')
-            bump_data[corner] = {}
+        for code in ['FL', 'FR', 'RL', 'RR']:
+            force = lap.ch(f'Susp Force {code}')
+            defl  = lap.ch(f'Vertical Tyre Deflection {code}')
+            bump_data[code] = {}
             if force and not force.is_flat:
-                bump_data[corner]['susp_force_rel'] = {
+                bump_data[code]['susp_force_rel'] = {
                     'mean': round(force.stats()['mean'], 3),
                     'max':  round(force.stats()['max'], 3),
                 }
             if defl and not defl.is_flat:
-                bump_data[corner]['tyre_deflection_rel'] = {
+                bump_data[code]['tyre_deflection_rel'] = {
                     'mean': round(defl.stats()['mean'], 3),
                     'max':  round(defl.stats()['max'], 3),
                 }
