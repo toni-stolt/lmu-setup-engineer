@@ -5,782 +5,72 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="AI-powered setup advisor for Le Mans Ultimate. Upload your MoTeC telemetry and get specific, data-driven setup recommendations.">
   <title>LMU Setup Engineer</title>
-
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
-
-  <style>
-    /* ─── Reset & Tokens ─────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg:           #07090f;
-      --bg-2:         #0b0f1a;
-      --bg-3:         #101624;
-      --bg-4:         #161e2e;
-      --border:       #1c2840;
-      --border-hi:    #243554;
-      --blue:         #3b82f6;
-      --blue-dim:     #1d4ed8;
-      --blue-glow:    rgba(59,130,246,0.18);
-      --blue-subtle:  rgba(59,130,246,0.06);
-      --cyan:         #38bdf8;
-      --white:        #f1f5f9;
-      --muted:        #94a3b8;
-      --dim:          #475569;
-      --danger:       #ef4444;
-      --success:      #22c55e;
-      --font-head:    'Chakra Petch', sans-serif;
-      --font-mono:    'JetBrains Mono', monospace;
-      --radius:       4px;
-      --radius-lg:    8px;
-    }
-
-    html { scroll-behavior: smooth; }
-
-    body {
-      font-family: var(--font-mono);
-      background: var(--bg);
-      color: var(--white);
-      min-height: 100vh;
-      overflow-x: hidden;
-    }
-
-    /* ─── Grid background ────────────────────────────────────────── */
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background-image:
-        linear-gradient(rgba(59,130,246,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(59,130,246,0.03) 1px, transparent 1px);
-      background-size: 48px 48px;
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    /* ─── Header ─────────────────────────────────────────────────── */
-    header {
-      position: relative;
-      z-index: 10;
-      border-bottom: 1px solid var(--border);
-      background: rgba(7,9,15,0.9);
-      backdrop-filter: blur(12px);
-    }
-
-    .header-inner {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 0 24px;
-      height: 64px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .logo {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .logo-mark {
-      width: 32px;
-      height: 32px;
-      position: relative;
-      flex-shrink: 0;
-    }
-
-    .logo-mark svg {
-      width: 100%;
-      height: 100%;
-    }
-
-    .logo-text {
-      font-family: var(--font-head);
-      font-size: 15px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--white);
-    }
-
-    .logo-text span {
-      color: var(--blue);
-    }
-
-    .header-tag {
-      font-size: 10px;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      color: var(--dim);
-      font-family: var(--font-mono);
-    }
-
-    /* ─── Main layout ────────────────────────────────────────────── */
-    main {
-      position: relative;
-      z-index: 1;
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 48px 24px 80px;
-    }
-
-    /* ─── Hero ───────────────────────────────────────────────────── */
-    .hero {
-      margin-bottom: 48px;
-    }
-
-    .hero-eyebrow {
-      font-size: 10px;
-      letter-spacing: 0.25em;
-      text-transform: uppercase;
-      color: var(--blue);
-      margin-bottom: 16px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .hero-eyebrow::before {
-      content: '';
-      display: block;
-      width: 24px;
-      height: 1px;
-      background: var(--blue);
-    }
-
-    .hero h1 {
-      font-family: var(--font-head);
-      font-size: clamp(28px, 5vw, 44px);
-      font-weight: 700;
-      line-height: 1.1;
-      letter-spacing: -0.01em;
-      color: var(--white);
-      margin-bottom: 16px;
-    }
-
-    .hero h1 em {
-      font-style: normal;
-      color: var(--blue);
-    }
-
-    .hero p {
-      font-size: 15px;
-      line-height: 1.75;
-      color: var(--white);
-      max-width: 580px;
-    }
-
-    .hero p strong {
-      color: var(--cyan);
-      font-weight: 500;
-    }
-
-    /* ─── Card ───────────────────────────────────────────────────── */
-    .card {
-      background: var(--bg-2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-    }
-
-    .card-header {
-      padding: 16px 24px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      background: var(--bg-3);
-    }
-
-    .card-header-step {
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      background: var(--blue);
-      color: #fff;
-      font-family: var(--font-head);
-      font-size: 10px;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-
-    .card-header-title {
-      font-family: var(--font-head);
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--white);
-    }
-
-    .card-body {
-      padding: 24px;
-    }
-
-    /* ─── Drop zone ──────────────────────────────────────────────── */
-    .drop-zone {
-      border: 1px dashed var(--border-hi);
-      border-radius: var(--radius-lg);
-      padding: 40px 24px;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
-      position: relative;
-      background: var(--blue-subtle);
-    }
-
-    .drop-zone:hover,
-    .drop-zone.dragover {
-      border-color: var(--blue);
-      background: var(--blue-glow);
-    }
-
-    .drop-zone input[type="file"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-    }
-
-    .drop-icon {
-      width: 40px;
-      height: 40px;
-      margin: 0 auto 12px;
-      color: var(--blue);
-      opacity: 0.8;
-    }
-
-    .drop-label {
-      font-family: var(--font-head);
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--white);
-      margin-bottom: 6px;
-    }
-
-    .drop-sub {
-      font-size: 11px;
-      color: var(--dim);
-    }
-
-    .file-chosen {
-      display: none;
-      align-items: center;
-      gap: 10px;
-      padding: 12px 16px;
-      background: var(--bg-4);
-      border: 1px solid var(--border-hi);
-      border-radius: var(--radius);
-      margin-top: 12px;
-    }
-
-    .file-chosen.visible { display: flex; }
-
-    .file-chosen-name {
-      font-size: 12px;
-      color: var(--cyan);
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .file-chosen-clear {
-      background: none;
-      border: none;
-      color: var(--dim);
-      cursor: pointer;
-      font-size: 16px;
-      line-height: 1;
-      padding: 0;
-      transition: color 0.15s;
-    }
-
-    .file-chosen-clear:hover { color: var(--danger); }
-
-    /* ─── Lap selector ───────────────────────────────────────────── */
-    .lap-selector {
-      display: none;
-      margin-top: 16px;
-    }
-
-    .lap-selector.visible { display: block; }
-
-    .lap-selector label {
-      font-size: 10px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--dim);
-      display: block;
-      margin-bottom: 8px;
-    }
-
-    .lap-selector select {
-      width: 100%;
-      background: var(--bg-4);
-      border: 1px solid var(--border-hi);
-      border-radius: var(--radius);
-      color: var(--white);
-      font-family: var(--font-mono);
-      font-size: 12px;
-      padding: 10px 14px;
-      appearance: none;
-      cursor: pointer;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14L2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 14px center;
-      padding-right: 36px;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-
-    .lap-selector select:focus { border-color: var(--blue); }
-
-    /* ─── Separator ──────────────────────────────────────────────── */
-    .form-sep {
-      height: 1px;
-      background: var(--border);
-      margin: 0;
-    }
-
-    /* ─── Textarea ───────────────────────────────────────────────── */
-    .field-label {
-      font-size: 10px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--dim);
-      display: block;
-      margin-bottom: 8px;
-    }
-
-    textarea {
-      width: 100%;
-      background: var(--bg-4);
-      border: 1px solid var(--border-hi);
-      border-radius: var(--radius);
-      color: var(--white);
-      font-family: var(--font-mono);
-      font-size: 13px;
-      line-height: 1.6;
-      padding: 14px;
-      resize: vertical;
-      min-height: 100px;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-
-    textarea::placeholder { color: var(--dim); }
-    textarea:focus { border-color: var(--blue); }
-
-    .char-count {
-      font-size: 10px;
-      color: var(--dim);
-      text-align: right;
-      margin-top: 6px;
-    }
-
-    .char-count.warn { color: var(--danger); }
-
-    /* ─── Submit button ──────────────────────────────────────────── */
-    .submit-bar {
-      padding: 20px 24px;
-      border-top: 1px solid var(--border);
-      background: var(--bg-3);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }
-
-    .submit-hint {
-      font-size: 11px;
-      color: var(--dim);
-    }
-
-    .btn-analyze {
-      font-family: var(--font-head);
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #fff;
-      background: var(--blue);
-      border: none;
-      border-radius: var(--radius);
-      padding: 12px 28px;
-      cursor: pointer;
-      transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      white-space: nowrap;
-      box-shadow: 0 0 0 0 var(--blue-glow);
-    }
-
-    .btn-analyze:hover:not(:disabled) {
-      background: #2563eb;
-      box-shadow: 0 0 24px var(--blue-glow);
-    }
-
-    .btn-analyze:active:not(:disabled) { transform: translateY(1px); }
-
-    .btn-analyze:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
-
-    .btn-analyze .spinner {
-      display: none;
-      width: 14px;
-      height: 14px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: #fff;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-    }
-
-    .btn-analyze.loading .spinner { display: block; }
-    .btn-analyze.loading .btn-text { display: none; }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* ─── Error banner ───────────────────────────────────────────── */
-    .error-banner {
-      display: none;
-      background: rgba(239,68,68,0.08);
-      border: 1px solid rgba(239,68,68,0.3);
-      border-radius: var(--radius);
-      padding: 12px 16px;
-      font-size: 12px;
-      color: #fca5a5;
-      margin-top: 16px;
-      line-height: 1.5;
-    }
-
-    .error-banner.visible { display: block; }
-
-    /* ─── Results ────────────────────────────────────────────────── */
-    .results {
-      display: none;
-      margin-top: 32px;
-      animation: fadeUp 0.4s ease;
-    }
-
-    .results.visible { display: block; }
-
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(16px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-
-    /* Session strip */
-    .session-strip {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 1px;
-      background: var(--border);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      margin-bottom: 24px;
-    }
-
-    .session-cell {
-      background: var(--bg-3);
-      padding: 14px 18px;
-    }
-
-    .session-cell-label {
-      font-size: 9px;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: var(--dim);
-      margin-bottom: 4px;
-    }
-
-    .session-cell-value {
-      font-family: var(--font-mono);
-      font-size: 13px;
-      color: var(--white);
-      font-weight: 500;
-    }
-
-    .session-cell-value.accent { color: var(--cyan); }
-
-    /* Advice panel */
-    .advice-card {
-      background: var(--bg-2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-    }
-
-    .advice-header {
-      padding: 14px 24px;
-      border-bottom: 1px solid var(--border);
-      background: var(--bg-3);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .advice-header-title {
-      font-family: var(--font-head);
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--blue);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .advice-header-title::before {
-      content: '';
-      display: block;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--blue);
-      box-shadow: 0 0 8px var(--blue);
-    }
-
-    .advice-lap-badge {
-      font-size: 10px;
-      color: var(--dim);
-      font-family: var(--font-mono);
-    }
-
-    .advice-body {
-      padding: 28px 28px 32px;
-    }
-
-    /* Markdown-like formatting for advice text */
-    .advice-body p {
-      font-size: 13px;
-      line-height: 1.75;
-      color: var(--muted);
-      margin-bottom: 16px;
-    }
-
-    .advice-body strong {
-      color: var(--white);
-      font-weight: 500;
-    }
-
-    .advice-body h2,
-    .advice-body h3 {
-      font-family: var(--font-head);
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--white);
-      margin: 24px 0 10px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .advice-body h2:first-child,
-    .advice-body h3:first-child { margin-top: 0; }
-
-    .advice-body ul,
-    .advice-body ol {
-      padding-left: 0;
-      list-style: none;
-      margin-bottom: 16px;
-    }
-
-    .advice-body li {
-      font-size: 13px;
-      line-height: 1.75;
-      color: var(--muted);
-      padding: 6px 0 6px 20px;
-      position: relative;
-      border-bottom: 1px solid rgba(28,40,64,0.5);
-    }
-
-    .advice-body li:last-child { border-bottom: none; }
-
-    .advice-body li::before {
-      content: '›';
-      position: absolute;
-      left: 4px;
-      color: var(--blue);
-      font-size: 14px;
-    }
-
-    .advice-body li strong { color: var(--white); }
-
-    .advice-body em { color: var(--cyan); font-style: normal; }
-
-    /* ─── Footer ─────────────────────────────────────────────────── */
-    footer {
-      position: relative;
-      z-index: 1;
-      border-top: 1px solid var(--border);
-      padding: 20px 24px;
-      text-align: center;
-      font-size: 11px;
-      color: var(--dim);
-    }
-
-    /* ─── Meta row (track + lap) ─────────────────────────────────────── */
-    .meta-row {
-      display: flex;
-      gap: 16px;
-    }
-
-    .meta-field {
-      flex: 1;
-    }
-
-    .optional {
-      font-size: 9px;
-      color: var(--dim);
-      text-transform: none;
-      letter-spacing: 0;
-      font-weight: 400;
-    }
-
-    input[type="text"],
-    .meta-row select {
-      width: 100%;
-      background: var(--bg-4);
-      border: 1px solid var(--border-hi);
-      border-radius: var(--radius);
-      color: var(--white);
-      font-family: var(--font-mono);
-      font-size: 12px;
-      padding: 10px 14px;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-
-    input[type="text"]::placeholder { color: var(--dim); }
-    input[type="text"]:focus,
-    .meta-row select:focus { border-color: var(--blue); }
-
-    .meta-row select {
-      appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14L2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 14px center;
-      padding-right: 36px;
-      cursor: pointer;
-    }
-
-    /* ─── Description tips ──────────────────────────────────────────── */
-    .description-tips {
-      margin-top: 14px;
-      border: 1px solid var(--border-hi);
-      border-left: 3px solid var(--blue);
-      border-radius: var(--radius);
-      overflow: hidden;
-    }
-
-    .tips-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 14px;
-      background: var(--bg-4);
-      font-size: 12px;
-      font-weight: 600;
-      font-family: var(--font-head);
-      letter-spacing: 0.04em;
-      color: var(--white);
-    }
-
-    .tips-body {
-      padding: 12px 14px;
-      font-size: 12px;
-      line-height: 1.65;
-      color: var(--muted);
-    }
-
-    .tips-list {
-      margin-top: 8px;
-      padding-left: 0;
-      list-style: none;
-    }
-
-    .tips-list li {
-      padding: 3px 0 3px 16px;
-      position: relative;
-      color: var(--muted);
-    }
-
-    .tips-list li::before {
-      content: '›';
-      position: absolute;
-      left: 2px;
-      color: var(--blue);
-    }
-
-    .tips-list li strong {
-      color: var(--white);
-    }
-
-    /* ─── Responsive ─────────────────────────────────────────────── */
-    @media (max-width: 600px) {
-      main { padding: 32px 16px 60px; }
-      .hero { margin-bottom: 32px; }
-      .hero h1 { font-size: 26px; }
-      .card-body, .advice-body { padding: 16px; }
-      .submit-bar { flex-direction: column; align-items: stretch; }
-      .submit-bar .submit-hint { display: none; }
-      .btn-analyze { justify-content: center; }
-      .session-strip { grid-template-columns: 1fr 1fr; }
-    }
-  </style>
+  <link rel="stylesheet" href="css/style.css?v=2">
 </head>
 <body>
 
-  <!-- ── Header ──────────────────────────────────────────────────── -->
-  <header>
-    <div class="header-inner">
-      <div class="logo">
-        <div class="logo-mark">
-          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="1" y="1" width="30" height="30" rx="3" stroke="#1c2840" stroke-width="1"/>
-            <path d="M6 22L12 10L18 17L22 12L26 22" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <circle cx="18" cy="17" r="2" fill="#38bdf8"/>
-          </svg>
+  <!-- ── Sidebar ───────────────────────────────────────────────────────── -->
+  <nav class="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-eyebrow">Le Mans Ultimate</div>
+      <div class="brand-name">LMU <span>Setup</span></div>
+      <div class="brand-sub">Engineer</div>
+    </div>
+
+    <ul class="sidebar-nav">
+      <li class="sidebar-nav-item active" data-page="analysis">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h3A1.5 1.5 0 0 1 7 2.5v3A1.5 1.5 0 0 1 5.5 7h-3A1.5 1.5 0 0 1 1 5.5v-3zm8 0A1.5 1.5 0 0 1 10.5 1h3A1.5 1.5 0 0 1 15 2.5v3A1.5 1.5 0 0 1 13.5 7h-3A1.5 1.5 0 0 1 9 5.5v-3zm-8 8A1.5 1.5 0 0 1 2.5 9h3A1.5 1.5 0 0 1 7 10.5v3A1.5 1.5 0 0 1 5.5 15h-3A1.5 1.5 0 0 1 1 13.5v-3zm8 0A1.5 1.5 0 0 1 10.5 9h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 13.5v-3z"/>
+        </svg>
+        <span>Analysis</span>
+      </li>
+      <li class="sidebar-nav-item" data-page="guide">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1 2.828c.885-.37 2.154-.769 3.388-.893 1.33-.134 2.458.063 3.112.752v9.746c-.935-.53-2.12-.603-3.213-.493-1.18.12-2.37.461-3.287.811V2.828zm7.5-.141c.654-.689 1.782-.886 3.112-.752 1.234.124 2.503.523 3.388.893v9.966c-.917-.35-2.107-.692-3.287-.81-1.094-.111-2.278-.039-3.213.492V2.687zM8 1.783C7.015.936 5.587.81 4.287.94c-1.514.153-3.042.672-3.994 1.105A.5.5 0 0 0 0 2.5v11a.5.5 0 0 0 .707.455c.882-.4 2.303-.881 3.68-1.02 1.409-.142 2.59.087 3.223.877a.5.5 0 0 0 .78 0c.633-.79 1.814-1.019 3.222-.877 1.378.139 2.8.62 3.681 1.02A.5.5 0 0 0 16 13.5v-11a.5.5 0 0 0-.293-.455c-.952-.433-2.48-.952-3.994-1.105C10.413.809 8.985.936 8 1.783z"/>
+        </svg>
+        <span>Guide</span>
+      </li>
+    </ul>
+
+    <div class="sidebar-footer">AI-Powered · Free Tier</div>
+  </nav>
+
+  <!-- ── Content ────────────────────────────────────────────────────────── -->
+  <main class="content">
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         ANALYSIS PAGE
+    ════════════════════════════════════════════════════════════════════════ -->
+    <section id="page-analysis" class="page active">
+
+      <div class="page-header">
+        <div class="page-header-eyebrow">Telemetry Analysis</div>
+        <h1>Setup advice backed<br>by <em>real data.</em></h1>
+        <p>Upload a MoTeC .ld file, describe what the car is doing wrong, and get specific setup recommendations backed by your actual telemetry data.</p>
+      </div>
+
+      <!-- Stepper -->
+      <div class="stepper">
+        <div class="stepper-step active" data-step="1">
+          <div class="stepper-num">1</div>
+          <div class="stepper-label">Session</div>
         </div>
-        <div class="logo-text">LMU <span>Setup</span> Engineer</div>
+        <div class="stepper-line" id="stepLine1"></div>
+        <div class="stepper-step" data-step="2">
+          <div class="stepper-num">2</div>
+          <div class="stepper-label">Issue</div>
+        </div>
+        <div class="stepper-line" id="stepLine2"></div>
+        <div class="stepper-step" data-step="3">
+          <div class="stepper-num">3</div>
+          <div class="stepper-label">Results</div>
+        </div>
       </div>
-      <div class="header-tag">AI-Powered · Le Mans Ultimate</div>
-    </div>
-  </header>
 
-  <!-- ── Main ────────────────────────────────────────────────────── -->
-  <main>
+      <!-- ── Step 1: Session Setup ──────────────────────────────────────── -->
+      <div class="wizard-step active" id="step1">
 
-    <!-- Hero -->
-    <div class="hero">
-      <div class="hero-eyebrow">Telemetry Analysis</div>
-      <h1>Setup advice backed<br>by <em>real data.</em></h1>
-      <p><strong>Upload a MoTeC .ld file</strong>, describe what the car is doing wrong, and get specific setup recommendations backed by your actual telemetry data. Works with all LMU car classes — GT3, LMP2, LMP3, and Hypercar. <strong>The car is identified automatically.</strong> Type the track name in the field below for better results.</p>
-    </div>
-
-    <!-- Form card -->
-    <div class="card">
-
-      <!-- Step 1: File -->
-      <div class="card-header">
-        <div class="card-header-step">1</div>
-        <div class="card-header-title">Upload Telemetry File</div>
-      </div>
-      <div class="card-body">
+        <div class="section-title">Upload Telemetry File</div>
         <div class="drop-zone" id="dropZone">
           <input type="file" id="fileInput" accept=".ld">
           <div class="drop-icon">
@@ -794,96 +84,472 @@
         </div>
 
         <div class="file-chosen" id="fileChosen">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="#38bdf8"><path d="M13.5 2.5l-8 8-3-3-1.5 1.5 4.5 4.5 9.5-9.5z"/></svg>
+          <svg class="file-chosen-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 2.5l-8 8-3-3-1.5 1.5 4.5 4.5 9.5-9.5z"/></svg>
           <span class="file-chosen-name" id="fileName"></span>
           <button class="file-chosen-clear" id="fileClear" title="Remove file">×</button>
         </div>
 
-      </div>
+        <div class="divider"></div>
 
-      <div class="form-sep"></div>
-
-      <!-- Track name + lap selector row -->
-      <div class="card-body meta-row">
-        <div class="meta-field">
-          <label class="field-label" for="trackName">Track name <span class="optional">(optional — auto-detected if left blank)</span></label>
-          <input type="text" id="trackName" placeholder="e.g. Circuit de la Sarthe" autocomplete="off">
+        <div class="section-title">Car Class</div>
+        <div class="class-cards">
+          <div class="class-card" data-class="GT3">
+            <div class="class-card-name">GT3</div>
+            <div class="class-card-desc">ABS · Spec brakes</div>
+          </div>
+          <div class="class-card" data-class="LMP2">
+            <div class="class-card-name">LMP2</div>
+            <div class="class-card-desc">No ABS · Prototype</div>
+          </div>
+          <div class="class-card" data-class="Hypercar">
+            <div class="class-card-name">Hypercar</div>
+            <div class="class-card-desc">No ABS · Brake migration</div>
+          </div>
         </div>
-        <div class="meta-field" id="lapSelectorWrap" style="display:none">
+
+        <div class="meta-row">
+          <div class="meta-field">
+            <label class="field-label" for="trackName">Track name <span class="optional">(optional — auto-detected if left blank)</span></label>
+            <input type="text" id="trackName" placeholder="e.g. Circuit de la Sarthe" autocomplete="off">
+          </div>
+        </div>
+
+        <div id="lapSelectorWrap" style="display:none" class="mb-16">
           <label class="field-label" for="lapSelect">Lap to analyse</label>
           <select id="lapSelect"></select>
         </div>
-      </div>
 
-      <div class="form-sep"></div>
+        <div class="error-banner" id="errorBannerStep1"></div>
 
-      <!-- Step 2: Description -->
-      <div class="card-header">
-        <div class="card-header-step">2</div>
-        <div class="card-header-title">Describe the Handling Issue</div>
-      </div>
-      <div class="card-body">
-        <label class="field-label" for="description">Describe the handling problem in detail</label>
+        <div class="wizard-actions">
+          <div></div>
+          <div class="wizard-actions-right">
+            <button class="btn btn-primary" id="btnStep1Next" disabled>
+              Next: Describe Issue
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6 3l5 5-5 5"/></svg>
+            </button>
+          </div>
+        </div>
+
+      </div><!-- /step1 -->
+
+      <!-- ── Step 2: Describe Issue ─────────────────────────────────────── -->
+      <div class="wizard-step" id="step2">
+
+        <div class="section-title">Issue Category</div>
+        <div class="category-cards">
+          <div class="category-card" data-category="Understeer">
+            <div class="category-icon">↗</div>
+            <div class="category-name">Understeer</div>
+          </div>
+          <div class="category-card" data-category="Oversteer">
+            <div class="category-icon">↩</div>
+            <div class="category-name">Oversteer &amp; Snap</div>
+          </div>
+          <div class="category-card" data-category="Traction">
+            <div class="category-icon">⚡</div>
+            <div class="category-name">Traction &amp; Exits</div>
+          </div>
+          <div class="category-card" data-category="Braking">
+            <div class="category-icon">⊡</div>
+            <div class="category-name">Braking &amp; Rotation</div>
+          </div>
+          <div class="category-card" data-category="Bumps">
+            <div class="category-icon">〜</div>
+            <div class="category-name">Bumps &amp; Kerbs</div>
+          </div>
+        </div>
+
+        <div class="section-title">Describe the Problem</div>
+        <label class="field-label" for="description">Give as much detail as you can</label>
         <textarea
           id="description"
-          placeholder="Be as specific as possible — the more detail you give, the better the advice.&#10;&#10;e.g. I have snap oversteer on the exit of slow-speed corners, particularly at Arnage. It happens when I get back on the throttle at around 80–90 km/h. The rear steps out suddenly with very little warning. It seems worse when the kerbs are involved."
+          placeholder="Be specific — the more detail you give, the better the advice.&#10;&#10;e.g. I have snap oversteer on the exit of slow corners, particularly at Arnage. It happens when I get back on the throttle at around 80–90 km/h. The rear steps out suddenly with very little warning. It seems worse when the kerbs are involved."
           maxlength="1000"
         ></textarea>
         <div class="char-count" id="charCount">0 / 1000</div>
-        <div class="description-tips">
-          <div class="tips-header">
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="var(--blue)"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3a.75.75 0 1 1 0 1.5A.75.75 0 0 1 8 4zm.75 3.75v4.5h-1.5v-4.5h1.5z"/></svg>
-            More detail = significantly better advice
+
+        <div class="tips-panel" id="tipsPanel">
+          <div class="tips-panel-header">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3a.75.75 0 1 1 0 1.5A.75.75 0 0 1 8 4zm.75 3.75v4.5h-1.5v-4.5h1.5z"/></svg>
+            <span id="tipsPanelTitle">Tips for this category</span>
           </div>
-          <div class="tips-body">
-            The AI uses your description to decide what to look for in the telemetry. Vague descriptions produce generic advice. Specific descriptions produce targeted, actionable recommendations. Try to include:
-            <ul class="tips-list">
-              <li><strong>Corner speed</strong> — low / medium / high speed</li>
-              <li><strong>Phase</strong> — entry / apex / exit</li>
-              <li><strong>Problem type</strong> — understeer / oversteer / snap / instability over bumps</li>
-              <li><strong>Where on track</strong> — specific corner names or numbers if you know them</li>
-            </ul>
+          <div class="tips-panel-body" id="tipsPanelBody"></div>
+        </div>
+
+        <div class="error-banner" id="errorBannerStep2"></div>
+
+        <div class="wizard-actions">
+          <button class="btn btn-ghost" id="btnStep2Back">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M10 3L5 8l5 5"/></svg>
+            Back
+          </button>
+          <div class="wizard-actions-right">
+            <div class="submit-hint">Analysis takes 10–30 seconds. If the tool hasn't been used in the last 15 minutes it may take up to a minute to wake up.</div>
+            <button class="btn btn-primary" id="btnAnalyse" disabled>
+              <div class="spinner"></div>
+              <span class="btn-text">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M11.596 8.697l-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z"/></svg>
+                Analyse Telemetry
+              </span>
+            </button>
           </div>
         </div>
 
-        <div class="error-banner" id="errorBanner"></div>
-      </div>
+      </div><!-- /step2 -->
 
-      <!-- Submit -->
-      <div class="submit-bar">
-        <div class="submit-hint">Analysis takes 10–30 seconds. If the tool hasn't been used in the last 15 minutes it may take up to a minute to wake up.</div>
-        <button class="btn-analyze" id="submitBtn" disabled>
-          <div class="spinner"></div>
-          <span class="btn-text">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:4px"><path d="M11.596 8.697l-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z"/></svg>
-            Analyse Telemetry
-          </span>
-        </button>
-      </div>
+      <!-- ── Step 3: Results ────────────────────────────────────────────── -->
+      <div class="wizard-step" id="step3">
 
-    </div><!-- /card -->
-
-    <!-- Results -->
-    <div class="results" id="results">
-
-      <div class="session-strip" id="sessionStrip"></div>
-
-      <div class="advice-card">
-        <div class="advice-header">
-          <div class="advice-header-title">AI Setup Recommendations</div>
-          <div class="advice-lap-badge" id="lapBadge"></div>
+        <!-- Loading skeleton (shown while Gemini is thinking) -->
+        <div class="results-skeleton" id="resultsSkeleton">
+          <div class="skeleton-strip">
+            <div class="skeleton-cell"></div>
+            <div class="skeleton-cell"></div>
+            <div class="skeleton-cell"></div>
+            <div class="skeleton-cell"></div>
+          </div>
+          <div class="skeleton-advice">
+            <div class="skeleton-header"></div>
+            <div class="skeleton-body">
+              <div class="skeleton-line" style="width:90%"></div>
+              <div class="skeleton-line" style="width:75%"></div>
+              <div class="skeleton-line" style="width:85%"></div>
+              <div class="skeleton-line" style="width:60%"></div>
+              <div class="skeleton-line" style="width:80%"></div>
+              <div class="skeleton-line" style="width:70%"></div>
+              <div class="skeleton-line" style="width:55%"></div>
+            </div>
+          </div>
+          <div class="skeleton-status">Analysing your telemetry — this takes 10–30 seconds…</div>
         </div>
-        <div class="advice-body" id="adviceBody"></div>
+
+        <!-- Actual results (hidden until loaded) -->
+        <div class="results-content" id="resultsContent" style="display:none">
+
+          <div class="results-turn-info" id="turnInfo"></div>
+
+          <div class="session-strip" id="sessionStrip"></div>
+
+          <!-- Advice cards accumulate here -->
+          <div id="adviceList"></div>
+
+          <div class="results-actions">
+            <button class="btn btn-ghost" id="btnStartFresh">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
+              Start Fresh
+            </button>
+            <button class="btn btn-secondary" id="btnContinue">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg>
+              Continue with New Data
+            </button>
+          </div>
+
+          <!-- Follow-up panel -->
+          <div class="followup-panel" id="followupPanel">
+            <div class="followup-panel-header">
+              <div class="followup-panel-title">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>
+                Continue Analysis
+              </div>
+              <div class="followup-turn-badge" id="followupTurnBadge"></div>
+            </div>
+            <div class="followup-panel-body">
+              <div class="section-title" style="margin-bottom:10px">Upload New Telemetry</div>
+              <div class="drop-zone" id="followupDropZone">
+                <input type="file" id="followupFileInput" accept=".ld">
+                <div class="drop-icon">
+                  <svg viewBox="0 0 40 40" fill="none"><path d="M20 28V12M20 12L14 18M20 12L26 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 28.5C7.2 27.6 5 25.1 5 22C5 18.4 7.8 15.5 11.4 15.1C12.2 11.1 15.8 8 20 8C24.2 8 27.8 11.1 28.6 15.1C32.2 15.5 35 18.4 35 22C35 25.1 32.8 27.6 30 28.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </div>
+                <div class="drop-label">Drop new .ld file here</div>
+                <div class="drop-sub">or click to browse</div>
+              </div>
+              <div class="file-chosen" id="followupFileChosen">
+                <svg class="file-chosen-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 2.5l-8 8-3-3-1.5 1.5 4.5 4.5 9.5-9.5z"/></svg>
+                <span class="file-chosen-name" id="followupFileName"></span>
+                <button class="file-chosen-clear" id="followupFileClear" title="Remove">×</button>
+              </div>
+              <div id="followupLapWrap" style="display:none;margin-top:12px">
+                <label class="field-label" for="followupLapSelect">Lap to analyse</label>
+                <select id="followupLapSelect"></select>
+              </div>
+              <div style="margin-top:18px">
+                <label class="field-label" for="changesDescription">What setup changes did you make?</label>
+                <textarea id="changesDescription" placeholder="e.g. Softened front ARB by 2 clicks, moved brake bias 1% rearward, raised rear ride height 2mm." maxlength="500" style="min-height:80px"></textarea>
+              </div>
+              <div class="error-banner" id="errorBannerFollowup"></div>
+              <div class="followup-actions">
+                <button class="btn btn-ghost" id="btnCancelFollowup">Cancel</button>
+                <button class="btn btn-primary" id="btnFollowup" disabled>
+                  <div class="spinner"></div>
+                  <span class="btn-text">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M11.596 8.697l-6.363 3.692c-.54.313-1.233-.066-1.233-.697V4.308c0-.63.692-1.01 1.233-.696l6.363 3.692a.802.802 0 0 1 0 1.393z"/></svg>
+                    Analyse Follow-up
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div><!-- /followup-panel -->
+
+        </div><!-- /results-content -->
+
+      </div><!-- /step3 -->
+
+    </section><!-- /page-analysis -->
+
+    <!-- ════════════════════════════════════════════════════════════════════
+         GUIDE PAGE
+    ════════════════════════════════════════════════════════════════════════ -->
+    <section id="page-guide" class="page">
+
+      <div class="page-header">
+        <div class="page-header-eyebrow">User Guide</div>
+        <h1>Getting the best<br>from the <em>AI advisor.</em></h1>
+        <p>Learn how to write effective problem descriptions and understand what the AI analyses — so you get expert-level setup advice, not generic suggestions.</p>
       </div>
 
-    </div>
+      <!-- How it works -->
+      <div class="guide-section">
+        <div class="guide-section-title">How It Works</div>
+        <div class="how-it-works">
+          <div class="hiw-card" data-step="1">
+            <div class="hiw-step-num">1</div>
+            <div class="hiw-title">Upload Telemetry</div>
+            <div class="hiw-desc">Drop in your MoTeC .ld file from any LMU session. Select the lap you want to analyse.</div>
+          </div>
+          <div class="hiw-card" data-step="2">
+            <div class="hiw-step-num">2</div>
+            <div class="hiw-title">Describe the Issue</div>
+            <div class="hiw-desc">Tell the AI what the car is doing wrong — corner, phase, speed, and what it feels like.</div>
+          </div>
+          <div class="hiw-card" data-step="3">
+            <div class="hiw-step-num">3</div>
+            <div class="hiw-title">Get Advice</div>
+            <div class="hiw-desc">The AI cross-references your telemetry data with LMU setup theory and delivers specific, prioritised recommendations.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Good vs bad descriptions -->
+      <div class="guide-section">
+        <div class="guide-section-title">Writing Good Descriptions</div>
+        <div class="examples-grid">
+          <div class="example-box">
+            <div class="example-box-header good">
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 2.5l-8 8-3-3-1.5 1.5 4.5 4.5 9.5-9.5z"/></svg>
+              Good — specific and actionable
+            </div>
+            <div class="example-box-body">
+              "I have snap oversteer at Arnage — slow right-hander. It happens at throttle application around 70–80 km/h. The rear breaks away suddenly, no warning. It's worse on the inside kerb. I'm running a fairly stiff rear ARB."
+            </div>
+          </div>
+          <div class="example-box">
+            <div class="example-box-header bad">
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2l12 12M14 2L2 14"/></svg>
+              Bad — too vague
+            </div>
+            <div class="example-box-body">
+              "The car feels loose in corners."
+            </div>
+          </div>
+          <div class="example-box">
+            <div class="example-box-header good">
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 2.5l-8 8-3-3-1.5 1.5 4.5 4.5 9.5-9.5z"/></svg>
+              Good — phase and speed context
+            </div>
+            <div class="example-box-body">
+              "Understeer at the apex of high-speed corners — Porsche Curves and Indianapolis. The front pushes wide in the middle of the corner. No issue at entry or exit, just mid-corner."
+            </div>
+          </div>
+          <div class="example-box">
+            <div class="example-box-header bad">
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2l12 12M14 2L2 14"/></svg>
+              Bad — missing critical detail
+            </div>
+            <div class="example-box-body">
+              "Understeer. Fix it please."
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- What the AI analyses -->
+      <div class="guide-section">
+        <div class="guide-section-title">What the AI Analyses</div>
+        <div class="analysis-grid">
+          <div class="analysis-item">
+            <div class="analysis-item-icon">📐</div>
+            <div>
+              <div class="analysis-item-name">Ride Height</div>
+              <div class="analysis-item-desc">Per-corner ride height. Bottoming-out detection. Packer contact analysis.</div>
+            </div>
+          </div>
+          <div class="analysis-item">
+            <div class="analysis-item-icon">🔧</div>
+            <div>
+              <div class="analysis-item-name">Suspension</div>
+              <div class="analysis-item-desc">Corner travel, packer contact timing, 3rd spring usage.</div>
+            </div>
+          </div>
+          <div class="analysis-item">
+            <div class="analysis-item-icon">🔴</div>
+            <div>
+              <div class="analysis-item-name">Braking</div>
+              <div class="analysis-item-desc">Wheel rotation under braking, lockup detection, brake pressure channels.</div>
+            </div>
+          </div>
+          <div class="analysis-item">
+            <div class="analysis-item-icon">⚡</div>
+            <div>
+              <div class="analysis-item-name">Traction</div>
+              <div class="analysis-item-desc">Wheel slip on exit, patch velocity deltas, TC intervention zones.</div>
+            </div>
+          </div>
+          <div class="analysis-item">
+            <div class="analysis-item-icon">📍</div>
+            <div>
+              <div class="analysis-item-name">GPS &amp; Corners</div>
+              <div class="analysis-item-desc">GPS-based corner detection. Data segmented by track position.</div>
+            </div>
+          </div>
+          <div class="analysis-item">
+            <div class="analysis-item-icon">🌡️</div>
+            <div>
+              <div class="analysis-item-name">Tyre Data</div>
+              <div class="analysis-item-desc">Pressure, temperature, and deflection per wheel.</div>
+            </div>
+          </div>
+          <div class="analysis-item">
+            <div class="analysis-item-icon">↔️</div>
+            <div>
+              <div class="analysis-item-name">Body Attitude</div>
+              <div class="analysis-item-desc">Pitch and roll data during cornering and braking zones.</div>
+            </div>
+          </div>
+          <div class="analysis-item">
+            <div class="analysis-item-icon">🏎️</div>
+            <div>
+              <div class="analysis-item-name">Speed &amp; G-Forces</div>
+              <div class="analysis-item-desc">Speed trace, lateral/longitudinal G, corner identification.</div>
+            </div>
+          </div>
+          <div class="analysis-item">
+            <div class="analysis-item-icon">📊</div>
+            <div>
+              <div class="analysis-item-name">Session Info</div>
+              <div class="analysis-item-desc">Driver, car class, track — used to apply class-specific knowledge.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tips by category -->
+      <div class="guide-section">
+        <div class="guide-section-title">Tips by Issue Category</div>
+        <div class="tips-accordion" id="guideAccordion">
+
+          <div class="accordion-item" data-category="Understeer">
+            <div class="accordion-header">
+              <div class="accordion-icon">↗</div>
+              <div class="accordion-title">Understeer</div>
+              <svg class="accordion-chevron" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 4.5L8 11l6.5-6.5"/></svg>
+            </div>
+            <div class="accordion-body">
+              <p>The AI needs to know <strong>when</strong> and <strong>where</strong> the understeer occurs to distinguish corner phases.</p>
+              <ul>
+                <li><strong>Corner entry push:</strong> mention trail-braking behaviour, how hard you're turning in</li>
+                <li><strong>Mid-corner push:</strong> mention the steady-state speed and whether it's high or low speed</li>
+                <li><strong>Exit push:</strong> mention throttle application timing and corner exit speed</li>
+                <li>Describe specific corners by name — high-speed corners need different fixes to low-speed hairpins</li>
+                <li>Note if it's worse in one type of corner than another</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="accordion-item" data-category="Oversteer">
+            <div class="accordion-header">
+              <div class="accordion-icon">↩</div>
+              <div class="accordion-title">Oversteer &amp; Snap</div>
+              <svg class="accordion-chevron" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 4.5L8 11l6.5-6.5"/></svg>
+            </div>
+            <div class="accordion-body">
+              <p>Snap oversteer is one of the most dangerous handling issues. The AI needs as much context as possible.</p>
+              <ul>
+                <li><strong>Entry snap:</strong> is it under braking while turning? Mention if trail-braking is involved</li>
+                <li><strong>Mid-corner:</strong> does the rear move at steady throttle? Note the cornering speed</li>
+                <li><strong>Exit:</strong> is it at initial throttle pickup or further through the power application?</li>
+                <li>Does it happen on kerbs specifically? Kerb-induced snap has different causes</li>
+                <li>Does the car give warning or is it sudden? Sudden = different setup cause</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="accordion-item" data-category="Traction">
+            <div class="accordion-header">
+              <div class="accordion-icon">⚡</div>
+              <div class="accordion-title">Traction &amp; Exits</div>
+              <svg class="accordion-chevron" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 4.5L8 11l6.5-6.5"/></svg>
+            </div>
+            <div class="accordion-body">
+              <p>Traction issues are often addressed first with TC settings before touching the mechanical setup.</p>
+              <ul>
+                <li>Mention your current TC settings (TC, TC Slip, TC Cut) — these are adjusted first</li>
+                <li>Is it wheelspin, or is the car also moving laterally? (snap vs. pure wheelspin)</li>
+                <li>What corner type? Slow hairpins vs. medium exits have different solutions</li>
+                <li>Mention the car speed when it starts — 60 km/h hairpin exit vs. 120 km/h mid-speed</li>
+                <li>Does it happen on cold tyres only, or throughout the stint?</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="accordion-item" data-category="Braking">
+            <div class="accordion-header">
+              <div class="accordion-icon">⊡</div>
+              <div class="accordion-title">Braking &amp; Rotation</div>
+              <svg class="accordion-chevron" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 4.5L8 11l6.5-6.5"/></svg>
+            </div>
+            <div class="accordion-body">
+              <p>Braking diagnosis is very different between GT3 (has ABS) and prototypes (no ABS). Mention your car class clearly.</p>
+              <ul>
+                <li><strong>For lockups (non-GT3):</strong> which end/wheel is locking? Front or rear?</li>
+                <li><strong>For GT3:</strong> mention your ABS setting — ABS 9 (Understeer) is the competitive default</li>
+                <li>Is there instability under braking, or pure lockup? Instability can be suspension-related</li>
+                <li>Does it happen in straight-line braking, or while turning in (trail-braking)?</li>
+                <li>Mention the specific braking zones if you know them (e.g. Ford Chicane at Le Mans)</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="accordion-item" data-category="Bumps">
+            <div class="accordion-header">
+              <div class="accordion-icon">〜</div>
+              <div class="accordion-title">Bumps &amp; Kerbs</div>
+              <svg class="accordion-chevron" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 4.5L8 11l6.5-6.5"/></svg>
+            </div>
+            <div class="accordion-body">
+              <p>Bump and kerb issues are primarily addressed with fast dampers, not slow dampers.</p>
+              <ul>
+                <li>Which kerbs specifically? Sausage kerbs, flat kerbs, or rumble strips?</li>
+                <li>What does the car do over the bump — bounce, snap, or just lose grip?</li>
+                <li>Does it affect both ends equally, or is one axle worse?</li>
+                <li>Is the issue the initial hit or the aftermath? (landing vs. recovery)</li>
+                <li>Are you running packers that might be too stiff? High-speed bumps + packers = trouble</li>
+              </ul>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </section><!-- /page-guide -->
 
   </main>
 
-  <footer>
+  <footer class="site-footer">
     LMU Setup Engineer · AI-powered · Not affiliated with Le Mans Ultimate or Motorsport Games
   </footer>
 
+  <script src="js/guide.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

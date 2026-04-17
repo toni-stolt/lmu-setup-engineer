@@ -2,10 +2,12 @@
 app.py — Flask backend for LMU Setup Engineer
 
 Routes:
-  POST /analyze  — accepts a .ld file + driver description, returns AI advice
+  POST /analyze  — accepts a .ld file + driver description, returns AI advice.
+                   Supports multi-turn sessions via optional session_id / history fields.
   GET  /health   — simple health check
 """
 
+import json
 import os
 import tempfile
 from flask import Flask, request, jsonify
@@ -16,8 +18,9 @@ from datetime import date
 
 import ld_reader
 import telemetry_analyzer
-from prompt_builder import build_user_prompt
-from gemini_client import get_setup_advice
+import session_store
+from prompt_builder import build_user_prompt, build_followup_prompt
+from gemini_client import create_chat_and_send, send_followup, get_setup_advice
 
 
 def _fmt_laptime(seconds):
@@ -69,7 +72,7 @@ def analyze():
     if not _check_rate_limit(ip):
         return jsonify({'error': 'Daily request limit reached. Try again tomorrow.'}), 429
 
-    # --- Validate inputs ---
+    # --- Validate required inputs ---
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded.'}), 400
 
@@ -83,11 +86,27 @@ def analyze():
     if len(description) > 1000:
         return jsonify({'error': 'Description too long (max 1000 characters).'}), 400
 
-    track_name = request.form.get('track_name', '').strip()
-    car_class  = request.form.get('car_class', '').strip()
-    lap_index  = request.form.get('lap_index')
+    # --- Optional fields ---
+    track_name          = request.form.get('track_name', '').strip()
+    lap_index           = request.form.get('lap_index')
+    car_class           = request.form.get('car_class', '').strip()       # GT3 / LMP2 / Hypercar
+    issue_category      = request.form.get('issue_category', '').strip()  # Understeer / etc.
+    session_id_in       = request.form.get('session_id', '').strip()      # follow-up: existing session
+    changes_description = request.form.get('changes_description', '').strip()  # follow-up: what changed
+
+    # history: JSON string — client-side backup in case server session expired
+    history_json = request.form.get('history', '')
+    client_history = None
+    if history_json:
+        try:
+            client_history = json.loads(history_json)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    is_followup = bool(session_id_in)
 
     # --- Save to temp file and parse ---
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix='.ld', delete=False) as tmp:
             file.save(tmp.name)
@@ -99,10 +118,11 @@ def analyze():
         return jsonify({'error': f'Could not read .ld file: {e}'}), 400
 
     finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
     if not ld_file.laps:
         return jsonify({'error': 'No laps found in the file.'}), 400
@@ -125,7 +145,7 @@ def analyze():
     except Exception as e:
         return jsonify({'error': f'Telemetry analysis failed: {e}'}), 500
 
-    # --- Build prompt and call AI ---
+    # --- Build metadata ---
     meta = {
         'driver':    ld_file.driver,
         'vehicle':   ld_file.vehicle,
@@ -134,24 +154,59 @@ def analyze():
         'car_class': car_class,
     }
 
+    # --- Call AI ---
     try:
-        user_prompt = build_user_prompt(analysis, description, meta)
-        advice = get_setup_advice(user_prompt)
+        if not is_followup:
+            # ── First turn: new analysis ──────────────────────────────────
+            user_prompt = build_user_prompt(analysis, description, meta)
+            advice, history = create_chat_and_send(user_prompt)
+            new_session_id = session_store.new_session(history)
+            turn_number = 1
+
+        else:
+            # ── Follow-up turn ────────────────────────────────────────────
+            if not changes_description:
+                return jsonify({'error': 'Please describe what setup changes you made.'}), 400
+
+            # Prefer server-side session; fall back to client-supplied history
+            history = session_store.get_history(session_id_in) or client_history
+            if not history:
+                return jsonify({
+                    'error': 'Session not found or expired. Please start a new analysis.'
+                }), 400
+
+            followup_prompt = build_followup_prompt(analysis, changes_description, meta)
+            advice, updated_history = send_followup(history, followup_prompt)
+
+            # Persist updated history; create new session entry if old one expired
+            if session_store.get_history(session_id_in) is not None:
+                session_store.update_history(session_id_in, updated_history)
+                new_session_id = session_id_in
+            else:
+                new_session_id = session_store.new_session(updated_history)
+
+            history = updated_history
+            # turn_number = number of user messages in history
+            turn_number = sum(1 for h in history if h['role'] == 'user')
+
     except Exception as e:
         return jsonify({'error': f'AI request failed: {e}'}), 502
 
     # --- Build response ---
     laps_info = [
         {
-            'index': i,
-            'lap_number': lp.lap_number,
+            'index':        i,
+            'lap_number':   lp.lap_number,
             'lap_time_str': _fmt_laptime(lp.lap_time_s),
         }
         for i, lp in enumerate(ld_file.laps)
     ]
 
     return jsonify({
-        'advice': advice,
+        'advice':     advice,
+        'session_id': new_session_id,
+        'history':    history,
+        'turn_number': turn_number,
         'session': {
             'driver':   meta['driver'],
             'vehicle':  meta['vehicle'],
@@ -172,5 +227,5 @@ def analyze():
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5002))
     app.run(host='0.0.0.0', port=port, debug=False)

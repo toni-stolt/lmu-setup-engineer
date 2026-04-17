@@ -1,8 +1,13 @@
 """
-gemini_client.py — Sends the prompt to Google Gemini and returns the response
+gemini_client.py — Sends prompts to Google Gemini and returns responses.
 
 Uses the google-genai SDK (replaces deprecated google-generativeai).
 API key is read from the GEMINI_API_KEY environment variable (set in .env).
+
+Public functions:
+  get_setup_advice(user_prompt)              — single-turn (legacy, preserved for compat)
+  create_chat_and_send(user_prompt)          — first turn of a multi-turn session
+  send_followup(history, followup_prompt)   — subsequent turns using stored history
 """
 
 import os
@@ -12,7 +17,7 @@ from prompt_builder import SYSTEM_PROMPT
 
 
 # ---------------------------------------------------------------------------
-# Initialise the client on first use
+# Client initialisation
 # ---------------------------------------------------------------------------
 
 _client = None
@@ -29,18 +34,64 @@ def _get_client():
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Constants
 # ---------------------------------------------------------------------------
 
 MODEL = 'gemini-2.5-flash'
 
+_CONFIG = types.GenerateContentConfig(
+    system_instruction=SYSTEM_PROMPT,
+    temperature=0.4,
+    max_output_tokens=8192,
+)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _extract_text(response) -> str:
+    """Extract the text payload from a Gemini response.
+
+    Handles thinking models where response.text may be None (thought tokens
+    are filtered out by checking the `thought` attribute on each Part).
+    """
+    if response.text is not None:
+        return response.text
+
+    candidates = response.candidates or []
+    if candidates and candidates[0].content and candidates[0].content.parts:
+        parts = candidates[0].content.parts
+        text = ''.join(p.text for p in parts if p.text and not getattr(p, 'thought', False))
+        if text:
+            return text
+
+    raise RuntimeError('Gemini returned an empty response.')
+
+
+def _build_contents(history: list) -> list:
+    """Convert serialised history dicts to Content objects for the API.
+
+    History format:
+      [{'role': 'user',  'parts': [{'text': '...'}]},
+       {'role': 'model', 'parts': [{'text': '...'}]}, ...]
+    """
+    result = []
+    for item in history:
+        parts = [types.Part(text=p['text']) for p in item['parts'] if p.get('text')]
+        result.append(types.Content(role=item['role'], parts=parts))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def get_setup_advice(user_prompt: str) -> str:
-    """
-    Send the user prompt to Gemini and return the text response.
+    """Single-turn analysis — preserved for backward compatibility.
 
     Args:
-        user_prompt: the formatted prompt from prompt_builder.build_user_prompt()
+        user_prompt: formatted prompt from prompt_builder.build_user_prompt()
 
     Returns:
         str — Gemini's response text
@@ -54,26 +105,86 @@ def get_setup_advice(user_prompt: str) -> str:
         response = client.models.generate_content(
             model=MODEL,
             contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.4,
-                max_output_tokens=8192,
-            ),
+            config=_CONFIG,
         )
+        return _extract_text(response)
 
-        # Gemini 2.5+ thinking models: response.text is None when the model
-        # includes thinking tokens. Collect only the non-thought parts.
-        if response.text is not None:
-            return response.text
+    except Exception as e:
+        raise RuntimeError(f'Gemini API error: {e}') from e
 
-        candidates = response.candidates or []
-        if candidates and candidates[0].content and candidates[0].content.parts:
-            parts = candidates[0].content.parts
-            text = ''.join(p.text for p in parts if p.text and not p.thought)
-            if text:
-                return text
 
-        raise RuntimeError('Gemini returned an empty response.')
+def create_chat_and_send(user_prompt: str) -> tuple:
+    """Start a new multi-turn conversation and send the first message.
+
+    Args:
+        user_prompt: formatted prompt from prompt_builder.build_user_prompt()
+
+    Returns:
+        (response_text: str, history: list)
+        where history is a JSON-serialisable list of message dicts.
+
+    Raises:
+        RuntimeError if the API call fails
+    """
+    client = _get_client()
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=user_prompt,
+            config=_CONFIG,
+        )
+        text = _extract_text(response)
+
+        # Build the history manually from this first turn
+        history = [
+            {'role': 'user',  'parts': [{'text': user_prompt}]},
+            {'role': 'model', 'parts': [{'text': text}]},
+        ]
+        return text, history
+
+    except Exception as e:
+        raise RuntimeError(f'Gemini API error: {e}') from e
+
+
+def send_followup(history: list, followup_prompt: str) -> tuple:
+    """Continue an existing conversation using a stored history list.
+
+    Args:
+        history:          list of dicts from a previous call (create_chat_and_send
+                          or send_followup)
+        followup_prompt:  the new message to send
+
+    Returns:
+        (response_text: str, updated_history: list)
+
+    Raises:
+        RuntimeError if the API call fails
+    """
+    client = _get_client()
+
+    # Build full contents: all previous messages + the new user message
+    contents = _build_contents(history) + [
+        types.Content(
+            role='user',
+            parts=[types.Part(text=followup_prompt)],
+        )
+    ]
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=contents,
+            config=_CONFIG,
+        )
+        text = _extract_text(response)
+
+        # Extend history with the new turn
+        updated_history = history + [
+            {'role': 'user',  'parts': [{'text': followup_prompt}]},
+            {'role': 'model', 'parts': [{'text': text}]},
+        ]
+        return text, updated_history
 
     except Exception as e:
         raise RuntimeError(f'Gemini API error: {e}') from e
@@ -107,7 +218,9 @@ if __name__ == '__main__':
     }
 
     prompt = build_user_prompt(analysis, description, meta)
-    print('Sending to Gemini...\n')
+    print('Sending first turn to Gemini...\n')
 
-    advice = get_setup_advice(prompt)
-    print(advice)
+    text, history = create_chat_and_send(prompt)
+    print('Turn 1 response:')
+    print(text)
+    print(f'\nHistory has {len(history)} messages.')

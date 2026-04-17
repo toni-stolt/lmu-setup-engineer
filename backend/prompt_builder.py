@@ -582,6 +582,46 @@ def _format_targeted_extra(extra, categories):
 
 
 # ---------------------------------------------------------------------------
+# Follow-up prompt builder (multi-turn)
+# ---------------------------------------------------------------------------
+
+def build_followup_prompt(new_analysis: dict, changes_description: str, meta: dict) -> str:
+    """Build a follow-up prompt framing new telemetry as a comparison run.
+
+    Args:
+        new_analysis:        dict from telemetry_analyzer.analyze() on the new lap
+        changes_description: what the driver changed between runs
+        meta:                dict with driver, vehicle, venue, datetime
+
+    Returns:
+        str — the formatted follow-up prompt
+    """
+    # Reuse the existing formatter for the telemetry section
+    new_data_prompt = build_user_prompt(
+        new_analysis,
+        '[see follow-up request below]',
+        meta,
+    )
+
+    return (
+        "## FOLLOW-UP ANALYSIS — Driver Has Made Setup Changes\n\n"
+        "The driver has uploaded new telemetry after making setup changes. "
+        "Compare this run with your previous analysis.\n\n"
+        "**Setup changes made since your last recommendation:**\n"
+        f"{changes_description.strip()}\n\n"
+        "**New telemetry data:**\n"
+        f"{new_data_prompt}\n\n"
+        "**Your task:**\n"
+        "1. Assess whether the changes had the expected effect based on the new telemetry.\n"
+        "2. Note any improvements or new issues that have appeared.\n"
+        "3. Recommend the next step — continue in the same direction, or pivot if the change "
+        "did not help.\n"
+        "Keep the response focused on the delta from before; avoid repeating analysis that "
+        "has not changed."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Quick test
 # ---------------------------------------------------------------------------
 
