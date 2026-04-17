@@ -2,10 +2,16 @@
 ld_reader.py — MoTeC .ld file reader for LMU Setup Engineer
 
 Wraps ldparser and handles:
-- Correct channel scaling (three tiers: direct, shift-corrected, relative)
+- Correct channel scaling (bypasses ldparser's buggy formula for mul != 1 channels)
 - Lap segmentation by Lap Number channel
 - Exclusion of dead/irrelevant channels
 - Detection of non-functional channels (flat data)
+
+Scaling bug fix:
+  ldparser applies: (raw / scale * 10^-dec + shift) * mul
+  which incorrectly multiplies shift by mul. The correct formula is:
+  raw * mul / (scale * 10^dec) + shift
+  We bypass ldparser's .data property and read raw bytes directly.
 """
 
 import numpy as np
@@ -59,53 +65,6 @@ ALWAYS_EXCLUDE = {
     'Yellow Flag State',
 }
 
-# These channels need `value - shift` to get physical units.
-# Verified empirically against known physical ranges.
-SHIFT_CORRECTED = {
-    'Ground Speed',    # output - shift = km/h
-    'Engine RPM',      # output - shift = rpm
-    'Motor RPM',       # output - shift = rpm (hybrid cars)
-}
-
-# Channels where ldparser output is already in correct physical units
-# (everything not in SHIFT_CORRECTED, not ALWAYS_EXCLUDE, and not RELATIVE_ONLY)
-
-# Channels where ldparser output has an unknown absolute offset due to how
-# LMU exports float32 data. Values are meaningful for relative comparison
-# within and between laps, but absolute physical values are not calibrated yet.
-# These are normalised to their observed range [0.0, 1.0] within each lap.
-RELATIVE_ONLY = {
-    'G Force Lat', 'G Force Long', 'G Force Vert',
-    'Local Rot Accel X', 'Local Rot Accel Y', 'Local Rot Accel Z',
-    'Local Rotation X', 'Local Rotation Y', 'Local Rotation Z',
-    'Susp Pos FL', 'Susp Pos FR', 'Susp Pos RL', 'Susp Pos RR',
-    'Susp Force FL', 'Susp Force FR', 'Susp Force RL', 'Susp Force RR',
-    'Ride Height FL', 'Ride Height FR', 'Ride Height RL', 'Ride Height RR',
-    'Front 3rd Pos', 'Rear 3rd Pos',
-    'Tyre Rubber Temp FL I', 'Tyre Rubber Temp FL C', 'Tyre Rubber Temp FL O',
-    'Tyre Rubber Temp FR I', 'Tyre Rubber Temp FR C', 'Tyre Rubber Temp FR O',
-    'Tyre Rubber Temp RL I', 'Tyre Rubber Temp RL C', 'Tyre Rubber Temp RL O',
-    'Tyre Rubber Temp RR I', 'Tyre Rubber Temp RR C', 'Tyre Rubber Temp RR O',
-    'Tyre Carcass Temp FL', 'Tyre Carcass Temp FR',
-    'Tyre Carcass Temp RL', 'Tyre Carcass Temp RR',
-    'Tyre Pressure FL', 'Tyre Pressure FR',
-    'Tyre Pressure RL', 'Tyre Pressure RR',
-    'Tyre Wear FL', 'Tyre Wear FR', 'Tyre Wear RL', 'Tyre Wear RR',
-    'Vertical Tyre Deflection FL', 'Vertical Tyre Deflection FR',
-    'Vertical Tyre Deflection RL', 'Vertical Tyre Deflection RR',
-    'Brake Temp FL', 'Brake Temp FR', 'Brake Temp RL', 'Brake Temp RR',
-    'Brake Pressure FL', 'Brake Pressure FR',
-    'Brake Pressure RL', 'Brake Pressure RR',
-    'Steering Shaft Torque',
-    'Motor Torque', 'Motor Temp', 'Motor Water Temp',
-    'Battery Charge Level',
-    'Lat Ground Vel FL', 'Lat Ground Vel FR', 'Lat Ground Vel RL', 'Lat Ground Vel RR',
-    'Long Ground Vel FL', 'Long Ground Vel FR', 'Long Ground Vel RL', 'Long Ground Vel RR',
-    'Lat Patch Vel FL', 'Lat Patch Vel FR', 'Lat Patch Vel RL', 'Lat Patch Vel RR',
-    'Long Patch Vel FL', 'Long Patch Vel FR', 'Long Patch Vel RL', 'Long Patch Vel RR',
-    'Wheel Rot Speed FL', 'Wheel Rot Speed FR', 'Wheel Rot Speed RL', 'Wheel Rot Speed RR',
-    'Wheel Y Location FL', 'Wheel Y Location FR', 'Wheel Y Location RL', 'Wheel Y Location RR',
-}
 
 # Minimum meaningful range for a channel to be considered non-flat
 FLAT_THRESHOLD = 0.01
@@ -116,14 +75,14 @@ FLAT_THRESHOLD = 0.01
 # ---------------------------------------------------------------------------
 
 class Channel:
-    """A single telemetry channel with corrected scaling."""
+    """A single telemetry channel with correctly scaled physical values."""
 
     def __init__(self, name, data, freq, unit, scaling):
         self.name = name
-        self.data = data          # numpy array, corrected values
+        self.data = data          # numpy array, physical values
         self.freq = freq          # Hz
-        self.unit = unit          # physical unit string ('' if unknown)
-        self.scaling = scaling    # 'direct' | 'shift_corrected' | 'relative' | 'excluded'
+        self.unit = unit          # physical unit string (mm, kPa, C, %, etc.)
+        self.scaling = scaling    # always 'direct' — kept for forward compatibility
 
     @property
     def is_flat(self):
@@ -203,28 +162,23 @@ class LDFile:
 # Parsing
 # ---------------------------------------------------------------------------
 
-def _correct_value(raw_data, channel_meta):
+def _apply_formula(raw_data, channel_meta):
     """
-    Apply the correct scaling to raw ldparser output.
+    Apply the correct MoTeC scaling formula to raw integer/float data.
 
-    Returns (corrected_data, scaling_label)
+    Correct formula: raw * mul / (scale * 10^dec) + shift
+
+    ldparser's formula is buggy for mul != 1: it multiplies shift by mul,
+    producing wildly incorrect values. We bypass ldparser's .data property
+    and read raw bytes directly, then apply the correct formula.
+
+    Returns (scaled_data, scaling_label)
     """
-    name = channel_meta.name
-
-    if name in SHIFT_CORRECTED:
-        return raw_data - channel_meta.shift, 'shift_corrected'
-
-    if name in RELATIVE_ONLY:
-        mn, mx = raw_data.min(), raw_data.max()
-        rng = mx - mn
-        if rng < FLAT_THRESHOLD:
-            # Channel is flat — return as-is, caller will detect via is_flat
-            return raw_data, 'relative'
-        normalised = (raw_data - mn) / rng
-        return normalised, 'relative'
-
-    # Default: ldparser output is already correct
-    return raw_data, 'direct'
+    scaled = (raw_data.astype(float)
+              * channel_meta.mul
+              / (channel_meta.scale * 10**channel_meta.dec)
+              + channel_meta.shift)
+    return scaled, 'direct'
 
 
 def _segment_laps(ld):
@@ -256,46 +210,37 @@ def _segment_laps(ld):
     return segments, lap_num_ch.freq
 
 
-def _get_last_laptime(ld, lap_index, segments):
+def _read_raw_channel(channel_meta):
     """
-    Get the lap time for a lap from the Last Laptime channel.
-    The laptime for lap N is recorded at the start of lap N+1.
-    """
-    last_lt_ch = None
-    for c in ld.channs:
-        if c.name == 'Last Laptime':
-            last_lt_ch = c
-            break
+    Read raw (unscaled) data directly from the .ld file, bypassing ldparser's
+    buggy scaling formula.
 
-    if last_lt_ch is None or lap_index >= len(segments) - 1:
+    Returns a numpy array of raw values, or None on failure.
+    """
+    if channel_meta.dtype is None:
         return None
-
-    _, _, end_idx = segments[lap_index]
-    # Convert index from lap_num_ch freq to last_lt_ch freq
-    lap_num_freq = segments[0][1]  # not reliable here — use ratio
-    # Use the value at the end of the current lap segment
-    ratio = last_lt_ch.freq / 50  # Lap Number is 50Hz
-    sample_idx = min(int(end_idx * ratio), len(last_lt_ch.data) - 1)
-    val = float(last_lt_ch.data[sample_idx])
-    return val if val > 0 else None
+    try:
+        with open(channel_meta._f, 'rb') as f:
+            f.seek(channel_meta.data_ptr)
+            return np.fromfile(f, count=channel_meta.data_len, dtype=channel_meta.dtype)
+    except Exception:
+        return None
 
 
 def _extract_channel_for_lap(channel_meta, lap_start_50hz, lap_end_50hz, lap_num_freq=50):
     """
-    Extract the data slice for a lap from a channel.
+    Extract the raw data slice for a lap from a channel.
     Converts lap boundaries (in Lap Number channel samples at 50Hz)
     to the channel's own sample rate.
     """
-    try:
-        raw_data = channel_meta.data
-    except Exception:
+    raw_data = _read_raw_channel(channel_meta)
+    if raw_data is None:
         return None
 
-    # Convert 50Hz indices to this channel's freq
     ratio = channel_meta.freq / lap_num_freq
     start = int(lap_start_50hz * ratio)
-    end = int(lap_end_50hz * ratio)
-    end = min(end, len(raw_data))
+    end   = int(lap_end_50hz   * ratio)
+    end   = min(end, len(raw_data))
     start = min(start, end)
 
     if start >= end:
@@ -312,7 +257,7 @@ def parse(filepath):
         filepath: path to the .ld file
 
     Returns:
-        LDFile object with all laps extracted and channels corrected
+        LDFile object with all laps extracted and channels in physical units
     """
     ld = ldData.fromfile(filepath)
 
@@ -339,7 +284,7 @@ def parse(filepath):
         if duration < 2.0:
             continue
 
-        # Get lap time
+        # Get lap time from Last Laptime channel (recorded at start of next lap)
         lap_time = None
         last_lt_ch = chan_by_name.get('Last Laptime')
         if last_lt_ch is not None and i + 1 < len(segments):
@@ -349,7 +294,7 @@ def parse(filepath):
             val = float(last_lt_ch.data[idx])
             lap_time = val if val > 0 else None
 
-        # Extract and correct each channel for this lap
+        # Extract and scale each channel for this lap
         channels = {}
         for name, meta in chan_by_name.items():
             if name in ALWAYS_EXCLUDE:
@@ -359,15 +304,15 @@ def parse(filepath):
             if slice_data is None or len(slice_data) == 0:
                 continue
 
-            corrected, scaling = _correct_value(slice_data, meta)
+            scaled, scaling = _apply_formula(slice_data, meta)
 
-            unit = meta.short_name if meta.short_name else ''
-            ch = Channel(name, corrected, meta.freq, unit, scaling)
+            unit = meta.unit if meta.unit else ''
+            ch = Channel(name, scaled, meta.freq, unit, scaling)
 
-            # Skip channels that are confirmed flat (no useful data)
+            # Skip channels confirmed flat (no useful data)
             if ch.is_flat and name not in {
                 'Brake Bias Rear', 'Front Tyre Compound', 'Rear Tyre Compound',
-                'Gear',  # can be flat on a straight
+                'Gear',
             }:
                 continue
 
@@ -377,7 +322,7 @@ def parse(filepath):
 
     # --- All channel metadata (for reference) ---
     all_meta = {
-        c.name: {'freq': c.freq, 'unit': c.short_name}
+        c.name: {'freq': c.freq, 'unit': c.unit}
         for c in ld.channs
     }
 
@@ -391,7 +336,7 @@ def parse(filepath):
 if __name__ == '__main__':
     import sys
     path = sys.argv[1] if len(sys.argv) > 1 else (
-        '../2026-01-20 - 17-54-41 - Circuit de la Sarthe - P1 kierros.ld'
+        '../2026-04-02 - 18-44-51 - Paul Ricard - 1A - P1.ld'
     )
 
     print(f'Parsing: {path}\n')
@@ -402,11 +347,14 @@ if __name__ == '__main__':
     for lap in ld_file.laps:
         print(lap)
         print(f'  Active channels: {len(lap.channels)}')
-        for name in ['Ground Speed', 'Throttle Pos', 'Brake Pos',
-                     'Engine RPM', 'Steering', 'Brake Bias Rear']:
+        for name in ['Ground Speed', 'Throttle Pos', 'Brake Pos', 'Engine RPM',
+                     'Ride Height FL', 'Ride Height RL',
+                     'Susp Pos FL', 'Front 3rd Pos',
+                     'Tyre Pressure FL', 'Tyre Rubber Temp FL I',
+                     'Brake Temp FL', 'Susp Force FL']:
             ch = lap.ch(name)
             if ch:
                 s = ch.stats()
-                print(f'  {name:<30} [{s["min"]:.1f} – {s["max"]:.1f}]  '
-                      f'mean={s["mean"]:.1f}  scaling={ch.scaling}')
+                print(f'  {name:<35} [{s["min"]:8.2f} – {s["max"]:8.2f}]  '
+                      f'mean={s["mean"]:8.2f}  unit={ch.unit}')
         print()

@@ -4,8 +4,10 @@ telemetry_analyzer.py — Telemetry analysis for LMU Setup Engineer
 Takes a Lap object from ld_reader and produces a structured summary dict
 ready to be formatted into an AI prompt. Two-stage:
 
-  1. base_summary()     — always-include statistics
-  2. targeted_analysis()— additional data driven by the issue description
+  1. base_summary()      — always-include statistics
+  2. targeted_analysis() — additional data driven by the issue description
+
+All values are in physical units (mm, kPa, °C, N, %, km/h, etc.).
 """
 
 import numpy as np
@@ -63,17 +65,16 @@ def detect_corners(lap):
 
     Returns a list of dicts, one per detected corner, sorted by track position.
     """
-    speed_ch   = lap.ch('Ground Speed')
-    dist_ch    = lap.ch('Lap Distance')
-    steer_ch   = lap.ch('Steering')
+    speed_ch    = lap.ch('Ground Speed')
+    dist_ch     = lap.ch('Lap Distance')
+    steer_ch    = lap.ch('Steering')
     throttle_ch = lap.ch('Throttle Pos')
-    brake_ch   = lap.ch('Brake Pos')
+    brake_ch    = lap.ch('Brake Pos')
 
     if speed_ch is None or dist_ch is None:
         return []
 
-    # Align everything to speed channel length
-    n = len(speed_ch.data)
+    n     = len(speed_ch.data)
     speed = speed_ch.data.copy()
     dist  = _resample(dist_ch.data, n)
 
@@ -81,12 +82,8 @@ def detect_corners(lap):
     throttle = _resample(throttle_ch.data, n) if throttle_ch else np.zeros(n)
     brake    = _resample(brake_ch.data, n)    if brake_ch    else np.zeros(n)
 
-    # Smooth speed to reduce noise before finding minima
     smoothed = _rolling_mean(speed, window=5)
-
-    # Find local minima in speed = corner apexes
-    # prominence: must drop at least CORNER_DROP_KMH from surrounding peaks
-    valleys, props = find_peaks(-smoothed, prominence=CORNER_DROP_KMH, distance=10)
+    valleys, _ = find_peaks(-smoothed, prominence=CORNER_DROP_KMH, distance=10)
 
     if len(valleys) == 0:
         return []
@@ -96,15 +93,12 @@ def detect_corners(lap):
 
     for idx in valleys:
         apex_dist = float(dist[idx])
-
-        # Enforce minimum separation between corners
         if apex_dist - prev_dist < CORNER_MIN_SEPARATION_M:
             continue
         prev_dist = apex_dist
 
         apex_speed = float(speed[idx])
 
-        # Define entry/exit windows (±100 samples around apex, clamped)
         entry_start = max(0, idx - 50)
         entry_end   = max(0, idx - 5)
         exit_start  = min(n - 1, idx + 5)
@@ -113,14 +107,8 @@ def detect_corners(lap):
         entry_speed = float(np.mean(speed[entry_start:entry_end])) if entry_end > entry_start else apex_speed
         exit_speed  = float(np.mean(speed[exit_start:exit_end]))   if exit_end > exit_start  else apex_speed
 
-        apex_steer    = float(steer[idx])
-        apex_throttle = float(throttle[idx])
-        entry_brake   = float(np.max(brake[entry_start:idx])) if idx > entry_start else 0.0
+        direction = 'right' if steer[idx] > 0 else 'left'
 
-        # Classify direction from steering angle
-        direction = 'right' if apex_steer > 0 else 'left'
-
-        # Classify by speed
         if apex_speed < SPEED_LOW:
             speed_class = 'low'
         elif apex_speed > SPEED_HIGH:
@@ -129,16 +117,16 @@ def detect_corners(lap):
             speed_class = 'medium'
 
         corners.append({
-            'number':         len(corners) + 1,
-            'position_m':     round(apex_dist, 0),
-            'direction':      direction,
-            'speed_class':    speed_class,
-            'apex_speed_kmh': round(apex_speed, 1),
-            'entry_speed_kmh':round(entry_speed, 1),
-            'exit_speed_kmh': round(exit_speed, 1),
-            'throttle_at_apex_pct': round(apex_throttle, 1),
-            'brake_at_entry_pct':   round(entry_brake, 1),
-            'steering_at_apex_deg': round(apex_steer, 1),
+            'number':               len(corners) + 1,
+            'position_m':           round(apex_dist, 0),
+            'direction':            direction,
+            'speed_class':          speed_class,
+            'apex_speed_kmh':       round(apex_speed, 1),
+            'entry_speed_kmh':      round(entry_speed, 1),
+            'exit_speed_kmh':       round(exit_speed, 1),
+            'throttle_at_apex_pct': round(float(throttle[idx]), 1),
+            'brake_at_entry_pct':   round(float(np.max(brake[entry_start:idx])) if idx > entry_start else 0.0, 1),
+            'steering_at_apex_deg': round(float(steer[idx]), 1),
         })
 
     return corners
@@ -149,44 +137,41 @@ def detect_corners(lap):
 # ---------------------------------------------------------------------------
 
 def _tyre_corner(lap, corner_code):
-    """
-    Return tyre stats for one corner (FL, FR, RL, RR).
-    Uses relative (normalised 0-1) values since absolute calibration is pending.
-    """
+    """Return tyre stats for one corner (FL, FR, RL, RR) in physical units."""
     result = {}
 
     for zone in ['I', 'C', 'O']:
         ch = lap.ch(f'Tyre Rubber Temp {corner_code} {zone}')
         if ch and not ch.is_flat:
-            result[f'temp_{zone.lower()}_rel'] = round(float(np.mean(ch.data)), 3)
+            result[f'temp_{zone.lower()}_C'] = round(float(np.mean(ch.data)), 1)
 
     carcass = lap.ch(f'Tyre Carcass Temp {corner_code}')
     if carcass and not carcass.is_flat:
-        result['carcass_temp_rel'] = round(float(np.mean(carcass.data)), 3)
+        result['carcass_temp_C'] = round(float(np.mean(carcass.data)), 1)
 
     pressure = lap.ch(f'Tyre Pressure {corner_code}')
     if pressure and not pressure.is_flat:
-        result['pressure_rel'] = round(float(np.mean(pressure.data)), 3)
+        result['pressure_kPa'] = round(float(np.mean(pressure.data)), 1)
 
     wear = lap.ch(f'Tyre Wear {corner_code}')
     if wear and not wear.is_flat:
-        result['wear_rel'] = round(float(np.mean(wear.data)), 3)
+        result['wear_pct'] = round(float(np.mean(wear.data)), 3)
 
     return result
 
 
 def tyre_summary(lap):
-    """Return tyre data for all four corners."""
+    """Return tyre data for all four corners in physical units."""
     result = {}
     for code in ['FL', 'FR', 'RL', 'RR']:
         data = _tyre_corner(lap, code)
         if data:
             result[code] = data
 
-    # Compute front/rear and left/right balance (inner temp only, if available)
+    # Front/rear and left/right temperature balance
     if all(k in result for k in ['FL', 'FR', 'RL', 'RR']):
         def _inner(code):
-            return result[code].get('temp_i_rel')
+            return result[code].get('temp_i_C')
 
         vals = {k: _inner(k) for k in ['FL', 'FR', 'RL', 'RR']}
         if all(v is not None for v in vals.values()):
@@ -196,13 +181,8 @@ def tyre_summary(lap):
             right_avg = (vals['FR'] + vals['RR']) / 2
 
             result['_balance'] = {
-                'front_vs_rear': round(front_avg - rear_avg, 3),
-                'left_vs_right': round(left_avg - right_avg, 3),
-                'note': (
-                    'Values are relative (0–1 normalised within this session). '
-                    'Positive front_vs_rear = fronts working harder. '
-                    'Use for balance comparison, not absolute temperatures.'
-                )
+                'front_vs_rear_C': round(front_avg - rear_avg, 1),
+                'left_vs_right_C': round(left_avg - right_avg, 1),
             }
 
     return result
@@ -213,7 +193,7 @@ def tyre_summary(lap):
 # ---------------------------------------------------------------------------
 
 def suspension_summary(lap):
-    """Return suspension position stats and suspension forces."""
+    """Return suspension position stats (mm) and suspension forces (N)."""
     result = {}
 
     for code in ['FL', 'FR', 'RL', 'RR']:
@@ -222,58 +202,68 @@ def suspension_summary(lap):
             continue
         d = ch.data
         entry = {
-            'mean_rel': round(float(np.mean(d)), 3),
-            'std_rel':  round(float(np.std(d)), 3),
+            'mean_mm': round(float(np.mean(d)), 2),
+            'min_mm':  round(float(np.min(d)), 2),
+            'max_mm':  round(float(np.max(d)), 2),
+            'std_mm':  round(float(np.std(d)), 2),
         }
         force_ch = lap.ch(f'Susp Force {code}')
         if force_ch and not force_ch.is_flat:
-            entry['force_mean_rel'] = round(float(np.mean(force_ch.data)), 3)
-            entry['force_max_rel']  = round(float(np.max(force_ch.data)), 3)
+            entry['force_mean_N'] = round(float(np.mean(force_ch.data)), 0)
+            entry['force_max_N']  = round(float(np.max(force_ch.data)), 0)
         result[code] = entry
 
-    # Third spring elements (LMP2, Hypercar)
     for label, ch_name in [('front_3rd', 'Front 3rd Pos'), ('rear_3rd', 'Rear 3rd Pos')]:
         ch = lap.ch(ch_name)
         if ch and not ch.is_flat:
             d = ch.data
             result[label] = {
-                'mean_rel': round(float(np.mean(d)), 3),
-                'std_rel':  round(float(np.std(d)), 3),
+                'mean_mm': round(float(np.mean(d)), 2),
+                'min_mm':  round(float(np.min(d)), 2),
+                'max_mm':  round(float(np.max(d)), 2),
+                'std_mm':  round(float(np.std(d)), 2),
             }
 
     return result
 
 
-def packer_analysis(lap, suspension_data):
+def packer_analysis(lap):
     """
-    Detect likely packer contact by analysing how much time each suspension
-    channel spends near its minimum value.
+    Detect likely packer contact by analysing suspension position channels.
 
-    Uses the relative (0-1) suspension position data already computed in
-    suspension_summary. A channel spending significant time near 0 suggests
-    the suspension is consistently at or near its travel limit (packer contact).
+    A channel is flagged when it spends significant time within
+    PACKER_TOLERANCE_MM of its observed minimum — that minimum being the
+    packer contact point.
+
+    Note: 3rd spring packer contact on straights is normal and desirable.
+    Corner packer contact (main suspension) is the problem to detect.
 
     Returns a dict per corner and per 3rd spring with:
-      pct_near_min  — % of lap where channel value < PCT_THRESHOLD
+      min_mm        — lowest observed position (mm)
+      pct_at_packer — % of lap within PACKER_TOLERANCE_MM of min
       flag          — 'likely' / 'possible' / 'none'
     """
-    PCT_THRESHOLD = 0.10   # below this = "near minimum"
-    FLAG_LIKELY   = 15.0   # % time near min to call it likely packer contact
-    FLAG_POSSIBLE = 5.0    # % time near min to call it possible
-
-    result = {}
+    PACKER_TOLERANCE_MM = 0.5  # within this of min = considered at packer
+    FLAG_LIKELY         = 15.0
+    FLAG_POSSIBLE       = 5.0
 
     channels = {
-        'FL': 'Susp Pos FL', 'FR': 'Susp Pos FR',
-        'RL': 'Susp Pos RL', 'RR': 'Susp Pos RR',
-        'front_3rd': 'Front 3rd Pos', 'rear_3rd': 'Rear 3rd Pos',
+        'FL':        'Susp Pos FL',
+        'FR':        'Susp Pos FR',
+        'RL':        'Susp Pos RL',
+        'RR':        'Susp Pos RR',
+        'front_3rd': 'Front 3rd Pos',
+        'rear_3rd':  'Rear 3rd Pos',
     }
 
+    result = {}
     for label, ch_name in channels.items():
         ch = lap.ch(ch_name)
         if ch is None or ch.is_flat:
             continue
-        pct = float(np.mean(ch.data < PCT_THRESHOLD) * 100)
+        d = ch.data
+        min_val = float(d.min())
+        pct = float(np.mean(d < (min_val + PACKER_TOLERANCE_MM)) * 100)
         if pct >= FLAG_LIKELY:
             flag = 'likely'
         elif pct >= FLAG_POSSIBLE:
@@ -281,25 +271,31 @@ def packer_analysis(lap, suspension_data):
         else:
             flag = 'none'
         result[label] = {
-            'pct_near_min': round(pct, 1),
-            'flag': flag,
+            'min_mm':        round(min_val, 2),
+            'pct_at_packer': round(pct, 1),
+            'flag':          flag,
         }
 
     return result
 
 
 def ride_height_summary(lap):
-    """Return ride height stats per corner.
-    Only mean is reported — min/max are always 0.0/1.0 due to normalisation
-    and would mislead the AI into diagnosing bottoming out.
     """
+    Return ride height stats per corner in mm.
+
+    Includes pct_below_25mm to detect bottoming out (25mm = scrape threshold).
+    """
+    BOTTOMING_MM = 25.0
     result = {}
     for code in ['FL', 'FR', 'RL', 'RR']:
         ch = lap.ch(f'Ride Height {code}')
         if ch and not ch.is_flat:
+            d = ch.data
             result[code] = {
-                'mean_rel': round(float(np.mean(ch.data)), 3),
-                'std_rel':  round(float(np.std(ch.data)), 3),
+                'mean_mm':        round(float(np.mean(d)), 1),
+                'min_mm':         round(float(np.min(d)), 1),
+                'max_mm':         round(float(np.max(d)), 1),
+                'pct_below_25mm': round(_pct_below(d, BOTTOMING_MM), 1),
             }
     return result
 
@@ -318,8 +314,8 @@ def base_summary(lap):
 
     # --- Session metadata ---
     result['session'] = {
-        'lap_number': lap.lap_number,
-        'lap_time_s': round(lap.lap_time_s, 3) if lap.lap_time_s else None,
+        'lap_number':  lap.lap_number,
+        'lap_time_s':  round(lap.lap_time_s, 3) if lap.lap_time_s else None,
         'lap_time_str': _format_laptime(lap.lap_time_s),
     }
 
@@ -327,19 +323,19 @@ def base_summary(lap):
     overview = {}
     speed = lap.ch('Ground Speed')
     if speed:
-        overview['max_speed_kmh']  = round(speed.stats()['max'], 1)
-        overview['avg_speed_kmh']  = round(speed.stats()['mean'], 1)
+        overview['max_speed_kmh'] = round(speed.stats()['max'], 1)
+        overview['avg_speed_kmh'] = round(speed.stats()['mean'], 1)
 
     throttle = lap.ch('Throttle Pos')
     if throttle:
-        overview['throttle_mean_pct']     = round(throttle.stats()['mean'], 1)
-        overview['throttle_full_pct']     = round(_pct_above(throttle.data, 95), 1)
-        overview['throttle_lift_pct']     = round(_pct_below(throttle.data, 5), 1)
+        overview['throttle_mean_pct'] = round(throttle.stats()['mean'], 1)
+        overview['throttle_full_pct'] = round(_pct_above(throttle.data, 95), 1)
+        overview['throttle_lift_pct'] = round(_pct_below(throttle.data, 5), 1)
 
     brake = lap.ch('Brake Pos')
     if brake:
-        overview['brake_mean_pct']        = round(brake.stats()['mean'], 1)
-        overview['brake_active_pct']      = round(_pct_above(brake.data, 5), 1)
+        overview['brake_mean_pct']   = round(brake.stats()['mean'], 1)
+        overview['brake_active_pct'] = round(_pct_above(brake.data, 5), 1)
 
     rpm = lap.ch('Engine RPM')
     if rpm:
@@ -362,12 +358,12 @@ def base_summary(lap):
     result['suspension'] = suspension_summary(lap)
 
     # --- Packer contact analysis ---
-    result['packer_analysis'] = packer_analysis(lap, result['suspension'])
+    result['packer_analysis'] = packer_analysis(lap)
 
     # --- Ride heights ---
     result['ride_heights'] = ride_height_summary(lap)
 
-    # --- Body attitude (physical units: radians) ---
+    # --- Body attitude ---
     body = {}
     for ch_name, key in [('Body Pitch', 'pitch_rad'), ('Body Roll', 'roll_rad')]:
         ch = lap.ch(ch_name)
@@ -380,14 +376,12 @@ def base_summary(lap):
     if body:
         result['body_attitude'] = body
 
-    # --- Camber (live, from 100Hz channel) ---
+    # --- Camber ---
     camber = {}
     for code in ['FL', 'FR', 'RL', 'RR']:
         ch = lap.ch(f'Camber {code}')
         if ch and not ch.is_flat:
-            d = ch.data
-            # Convert radians to degrees (values appear to be in radians)
-            d_deg = np.degrees(d)
+            d_deg = np.degrees(ch.data)
             camber[code] = {
                 'mean_deg': round(float(np.mean(d_deg)), 2),
                 'min_deg':  round(float(np.min(d_deg)), 2),
@@ -419,17 +413,15 @@ def _format_laptime(seconds):
 # Targeted analysis
 # ---------------------------------------------------------------------------
 
-# Keyword groups that trigger extra data extraction
 KEYWORDS = {
-    'oversteer':    ['oversteer', 'overst', 'loose', 'rear steps out', 'rear slides', 'snap oversteer'],
-    'understeer':   ['understeer', 'underst', 'push', 'washes wide', 'front slides', 'ploughs'],
-    'braking':      ['braking', 'brake', 'lockup', 'lock up', 'lock-up', 'trail brake', 'stopping'],
-    'traction':     ['traction', 'wheelspin', 'wheel spin', 'power oversteer', 'throttle exit'],
-    'bumps':        ['bump', 'kerb', 'kerbing', 'curb', 'curbing', 'rough', 'bouncing'],
-    'aero':         ['aero', 'downforce', 'high speed', 'high-speed', 'wing', 'straight line'],
-    # Hybrid: use word-boundary matching to avoid matching 'ers' inside other words
-    'hybrid':       [r'\bhybrid\b', r'\bers\b', r'\bdeploy\b', r'\bharvest\b',
-                     r'\belectric\b', r'\bmotor power\b'],
+    'oversteer':  ['oversteer', 'overst', 'loose', 'rear steps out', 'rear slides', 'snap oversteer'],
+    'understeer': ['understeer', 'underst', 'push', 'washes wide', 'front slides', 'ploughs'],
+    'braking':    ['braking', 'brake', 'lockup', 'lock up', 'lock-up', 'trail brake', 'stopping'],
+    'traction':   ['traction', 'wheelspin', 'wheel spin', 'power oversteer', 'throttle exit'],
+    'bumps':      ['bump', 'kerb', 'kerbing', 'curb', 'curbing', 'rough', 'bouncing'],
+    'aero':       ['aero', 'downforce', 'high speed', 'high-speed', 'wing', 'straight line'],
+    'hybrid':     [r'\bhybrid\b', r'\bers\b', r'\bdeploy\b', r'\bharvest\b',
+                   r'\belectric\b', r'\bmotor power\b'],
 }
 
 
@@ -440,7 +432,6 @@ def _detect_keywords(description):
     found = set()
     for category, patterns in KEYWORDS.items():
         for p in patterns:
-            # Patterns starting with \b use regex, others use plain substring match
             if p.startswith(r'\b') or '\\b' in p:
                 if re.search(p, text):
                     found.add(category)
@@ -452,16 +443,9 @@ def _detect_keywords(description):
 
 
 def _detect_corner_number(description):
-    """
-    Try to extract a corner number from the description.
-    e.g. 'Turn 5', 'corner 12', 'T5' → 5
-    """
+    """Try to extract a corner number from the description."""
     import re
-    patterns = [
-        r'\bturn\s*(\d+)\b',
-        r'\bcorner\s*(\d+)\b',
-        r'\bt(\d+)\b',
-    ]
+    patterns = [r'\bturn\s*(\d+)\b', r'\bcorner\s*(\d+)\b', r'\bt(\d+)\b']
     text = description.lower()
     for p in patterns:
         m = re.search(p, text)
@@ -484,17 +468,12 @@ def _detect_speed_class(description):
 
 def _lockup_detection(lap, corners):
     """
-    Detect likely wheel lockups during braking events.
+    Detect likely wheel lockups during hard braking events.
 
-    During hard braking (brake_pos > 20%), compare all four Wheel Rot Speed
-    channels. A wheel whose mean value during a braking zone is significantly
-    lower than the other three is likely locking.
+    Compares all four Wheel Rot Speed channels during braking zones.
+    A wheel whose mean is significantly lower than the other three is suspect.
 
-    Returns a list of events, each with:
-      position_m       — track position where braking started
-      corner           — nearest corner number (if within 300m)
-      suspected_wheels — list of wheel codes that appear to be locking
-      wheel_means      — mean rot speed for each wheel during the event (relative)
+    Returns a list of events with position, nearest corner, and suspected wheels.
     """
     brake_ch = lap.ch('Brake Pos')
     speed_ch = lap.ch('Ground Speed')
@@ -504,17 +483,18 @@ def _lockup_detection(lap, corners):
     if not all([brake_ch, speed_ch, dist_ch]) or not all(wheel_chs.values()):
         return []
 
-    n     = len(speed_ch.data)
-    brake = _resample(brake_ch.data, n)
-    dist  = _resample(dist_ch.data, n)
+    n      = len(speed_ch.data)
+    brake  = _resample(brake_ch.data, n)
+    dist   = _resample(dist_ch.data, n)
     wheels = {code: _resample(ch.data, n) for code, ch in wheel_chs.items() if not ch.is_flat}
 
     if len(wheels) < 4:
         return []
 
-    BRAKE_THRESHOLD   = 20.0   # % brake application to count as hard braking
-    MIN_ZONE_SAMPLES  = 10     # ignore very brief brake applications
-    LOCKUP_RATIO      = 0.60   # wheel mean below 60% of the other-three mean = suspect lockup
+    BRAKE_THRESHOLD  = 20.0  # % brake application to count as hard braking
+    MIN_ZONE_SAMPLES = 10    # ignore very brief applications
+    LOCKUP_RATIO     = 0.60  # wheel below 60% of others mean = suspect lockup
+    MIN_SPEED_UNITS  = 1.0   # others must be above this to flag (avoids stopped-car noise)
 
     events = []
     in_brake   = False
@@ -537,7 +517,7 @@ def _lockup_detection(lap, corners):
             suspected = []
             for code, val in means.items():
                 others_mean = np.mean([v for k, v in means.items() if k != code])
-                if others_mean > 0.05 and val < others_mean * LOCKUP_RATIO:
+                if others_mean > MIN_SPEED_UNITS and val < others_mean * LOCKUP_RATIO:
                     suspected.append(code)
 
             if suspected:
@@ -550,10 +530,10 @@ def _lockup_detection(lap, corners):
                         nearest = corners[idx]['number']
 
                 events.append({
-                    'position_m':      round(pos, 0),
-                    'corner':          nearest,
+                    'position_m':       round(pos, 0),
+                    'corner':           nearest,
                     'suspected_wheels': suspected,
-                    'wheel_means':     {k: round(v, 3) for k, v in means.items()},
+                    'wheel_means':      {k: round(v, 3) for k, v in means.items()},
                 })
 
     return events
@@ -572,17 +552,16 @@ def targeted_analysis(lap, description, corners, base):
     Returns:
         dict of targeted data to merge into the prompt
     """
-    categories = _detect_keywords(description)
+    categories  = _detect_keywords(description)
     corner_num  = _detect_corner_number(description)
     speed_class = _detect_speed_class(description)
 
     result = {
         'detected_categories': list(categories),
-        'corner_filter': None,
-        'data': {}
+        'corner_filter':       None,
+        'data':                {}
     }
 
-    # Identify which corners are relevant
     relevant_corners = corners
     if corner_num is not None:
         relevant_corners = [c for c in corners if c['number'] == corner_num]
@@ -600,8 +579,8 @@ def targeted_analysis(lap, description, corners, base):
             ch = lap.ch(f'Wheel Rot Speed {code}')
             if ch and not ch.is_flat:
                 wheel_data[code] = {
-                    'mean': round(ch.stats()['mean'], 3),
-                    'std':  round(ch.stats()['std'], 3),
+                    'mean': round(ch.stats()['mean'], 2),
+                    'std':  round(ch.stats()['std'], 2),
                 }
         if wheel_data:
             result['data']['wheel_rot_speeds'] = wheel_data
@@ -614,18 +593,17 @@ def targeted_analysis(lap, description, corners, base):
             temp     = lap.ch(f'Brake Temp {code}')
             brake_data[code] = {}
             if pressure and not pressure.is_flat:
-                brake_data[code]['pressure_rel'] = {
-                    'mean': round(pressure.stats()['mean'], 3),
-                    'max':  round(pressure.stats()['max'], 3),
+                brake_data[code]['pressure_pct'] = {
+                    'mean': round(pressure.stats()['mean'], 1),
+                    'max':  round(pressure.stats()['max'], 1),
                 }
             if temp and not temp.is_flat:
-                brake_data[code]['temp_rel'] = {
-                    'mean': round(temp.stats()['mean'], 3),
-                    'max':  round(temp.stats()['max'], 3),
+                brake_data[code]['temp_C'] = {
+                    'mean': round(temp.stats()['mean'], 0),
+                    'max':  round(temp.stats()['max'], 0),
                 }
         result['data']['brake_detail'] = brake_data
 
-        # Lockup detection: compare wheel rot speeds during hard braking events
         lockup = _lockup_detection(lap, relevant_corners)
         if lockup:
             result['data']['lockup_analysis'] = lockup
@@ -637,8 +615,8 @@ def targeted_analysis(lap, description, corners, base):
             ch = lap.ch(f'Wheel Rot Speed {code}')
             if ch and not ch.is_flat:
                 wheel_data[code] = {
-                    'mean': round(ch.stats()['mean'], 3),
-                    'std':  round(ch.stats()['std'], 3),
+                    'mean': round(ch.stats()['mean'], 2),
+                    'std':  round(ch.stats()['std'], 2),
                 }
         if wheel_data:
             result['data']['wheel_rot_speeds'] = wheel_data
@@ -649,12 +627,12 @@ def targeted_analysis(lap, description, corners, base):
             lat_ch  = lap.ch(f'Lat Patch Vel {code}')
             patch_data[code] = {}
             if long_ch and not long_ch.is_flat:
-                patch_data[code]['long_slip_rel'] = {
+                patch_data[code]['long_slip'] = {
                     'mean': round(long_ch.stats()['mean'], 3),
                     'max':  round(long_ch.stats()['max'], 3),
                 }
             if lat_ch and not lat_ch.is_flat:
-                patch_data[code]['lat_slip_rel'] = {
+                patch_data[code]['lat_slip'] = {
                     'mean': round(lat_ch.stats()['mean'], 3),
                     'max':  round(lat_ch.stats()['max'], 3),
                 }
@@ -669,18 +647,18 @@ def targeted_analysis(lap, description, corners, base):
             defl  = lap.ch(f'Vertical Tyre Deflection {code}')
             bump_data[code] = {}
             if force and not force.is_flat:
-                bump_data[code]['susp_force_rel'] = {
-                    'mean': round(force.stats()['mean'], 3),
-                    'max':  round(force.stats()['max'], 3),
+                bump_data[code]['susp_force_N'] = {
+                    'mean': round(force.stats()['mean'], 0),
+                    'max':  round(force.stats()['max'], 0),
                 }
             if defl and not defl.is_flat:
-                bump_data[code]['tyre_deflection_rel'] = {
+                bump_data[code]['tyre_deflection'] = {
                     'mean': round(defl.stats()['mean'], 3),
                     'max':  round(defl.stats()['max'], 3),
                 }
         result['data']['bump_detail'] = bump_data
 
-    # --- Hybrid: add motor data if non-flat ---
+    # --- Hybrid: motor data if non-flat ---
     if 'hybrid' in categories:
         hybrid_data = {}
         for ch_name in ['Motor RPM', 'Motor Torque', 'Battery Charge Level']:
@@ -703,8 +681,8 @@ def analyze(lap, issue_description=''):
     Returns a dict containing base_summary + targeted data,
     ready to be passed to prompt_builder.
     """
-    summary = base_summary(lap)
-    corners = summary.get('corners', [])
+    summary  = base_summary(lap)
+    corners  = summary.get('corners', [])
     targeted = targeted_analysis(lap, issue_description, corners, summary)
     summary['targeted'] = targeted
     return summary
@@ -720,7 +698,7 @@ if __name__ == '__main__':
     import ld_reader
 
     path = sys.argv[1] if len(sys.argv) > 1 else (
-        '../../2026-01-20 - 17-54-41 - Circuit de la Sarthe - P1 kierros.ld'
+        '../2026-04-02 - 18-44-51 - Paul Ricard - 1A - P1.ld'
     )
 
     print(f'Parsing: {path}')

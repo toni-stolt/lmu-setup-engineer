@@ -66,8 +66,12 @@ contact or bottoming out. These are root causes that override other setup advice
 
 ### The 25mm threshold
 - 25mm is where the underfloor starts to scrape the road (applies to all cars).
-- Brief spikes below 25mm are acceptable and desirable — they mean the car is as low as possible.
-- Extended periods below 25mm = bad bottoming out = drag from scraping = lost speed on straights.
+- Brief spikes below 25mm are desirable — they mean the car is running as low as possible.
+- Use these thresholds from the ride height data (pct_below_25mm):
+  - < 5%: normal and desirable. Do not flag as a problem.
+  - 5–15%: worth monitoring. Mention briefly but do not treat as a primary issue unless
+    the driver is also reporting instability or drag on straights.
+  - > 15%: significant bottoming out. Address this before other issues.
 
 ### Dynamic ride height
 Determined by: static ride height + spring stiffness + packer thickness
@@ -181,7 +185,7 @@ When diagnosing wheelspin or traction issues, address TC settings before mechani
 - **Never suggest tyre pressure changes.** Minimum pressure is always optimal in LMU.
 - **Never suggest asymmetric changes** (different left vs right). All changes must be symmetric.
 - **Never suggest third spring changes for GT3** or any car without front_3rd / rear_3rd data.
-- **Never infer bottoming out from a channel showing min=0.** That is a relative value.
+- **Never infer bottoming out unless ride height data is below 25mm.** Brief spikes are fine; extended periods below 25mm are bad.
 - **Never judge brake bias as high or low from its absolute value.** Direction of change only.
 - **For GT3 brake complaints:** check ABS setting is 9 (Understeer) before anything else.
 
@@ -208,19 +212,27 @@ sim racer, not a professional engineer.
 
 ## Notes on the telemetry data
 
-- Most channels (suspension position, ride heights, tyre temps, forces, pressures, wheel speeds)
-  are in RELATIVE units (0–1 normalised within the session). Use for comparison only.
-  Do not quote as absolute physical values.
-- Camber (degrees) and Body Pitch / Body Roll (radians) ARE in physical units — quote directly.
-- Speed, throttle position, brake position, RPM, and brake bias are in physical units.
+- All channels are in PHYSICAL UNITS. Quote values directly.
+  - Ride heights: mm (25mm = bottoming threshold)
+  - Suspension position: mm travel from reference
+  - Tyre temps: °C
+  - Tyre pressures: kPa
+  - Suspension forces: N
+  - Brake pressure per wheel: % of total pedal input going to that circuit
+  - Brake temps: °C
+  - Camber: degrees
+  - Body Pitch / Body Roll: radians (positive pitch = nose up; positive roll = roll to right)
+  - Speed: km/h
+  - Throttle / Brake position: %
+  - RPM, brake bias: physical units
 - CORNERS section: per-corner data (speed, braking, throttle, steering).
   All other sections (tyres, suspension, ride heights, camber) are LAP-WIDE averages.
 - Wheel Rot Speed (FL/FR/RL/RR): compare the four wheels against each other. A wheel
   dropping sharply toward 0 relative to the others during braking = likely lockup.
-- Brake Pressure (FL/FR/RL/RR): per-wheel. Compare to identify which end is braking harder
-  and correlate with any lockup signals from Wheel Rot Speed.
-- Susp Force (FL/FR/RL/RR): useful for packer contact confirmation alongside suspension
-  position data.
+- Brake Pressure (FL/FR/RL/RR): per-wheel % of pedal input. Compare to identify which
+  end is braking harder and correlate with lockup signals from Wheel Rot Speed.
+- Susp Force (FL/FR/RL/RR): N. Useful for packer contact confirmation alongside
+  suspension position data.
 """
 
 
@@ -279,7 +291,7 @@ def build_user_prompt(analysis, driver_description, ld_file_meta):
     # --- Ride heights ---
     rh = analysis.get('ride_heights', {})
     if rh:
-        parts.append(_section('RIDE HEIGHTS (relative)', _format_ride_heights(rh)))
+        parts.append(_section('RIDE HEIGHTS (mm)', _format_ride_heights(rh)))
 
     # --- Body attitude ---
     body = analysis.get('body_attitude', {})
@@ -320,12 +332,13 @@ def _section(title, content):
 
 def _format_session(session, meta):
     lines = [
-        f"Driver:   {meta.get('driver', 'Unknown')}",
-        f"Car:      {meta.get('vehicle', 'Unknown')}",
-        f"Track:    {meta.get('venue', 'Unknown')}",
-        f"Date:     {meta.get('datetime', 'Unknown')}",
-        f"Lap:      {session.get('lap_number', '?')}",
-        f"Lap time: {session.get('lap_time_str', 'unknown')}",
+        f"Car class: {meta.get('car_class', 'Unknown')}",
+        f"Driver:    {meta.get('driver', 'Unknown')}",
+        f"Car:       {meta.get('vehicle', 'Unknown')}",
+        f"Track:     {meta.get('venue', 'Unknown')}",
+        f"Date:      {meta.get('datetime', 'Unknown')}",
+        f"Lap:       {session.get('lap_number', '?')}",
+        f"Lap time:  {session.get('lap_time_str', 'unknown')}",
     ]
     return '\n'.join(lines)
 
@@ -374,28 +387,30 @@ def _format_tyres(tyres):
         if not t:
             continue
         parts = [f"{code}:"]
-        if 'temp_i_rel' in t:
+        if 'temp_i_C' in t:
             parts.append(
-                f"temp I/C/O = {t['temp_i_rel']:.3f}/{t.get('temp_c_rel', '?'):.3f}/{t.get('temp_o_rel', '?'):.3f} (rel)"
+                f"temp I/C/O = {t['temp_i_C']:.1f}/{t.get('temp_c_C', '?'):.1f}/{t.get('temp_o_C', '?'):.1f} °C"
             )
-        if 'pressure_rel' in t:
-            parts.append(f"pressure = {t['pressure_rel']:.3f} (rel)")
-        if 'wear_rel' in t:
-            parts.append(f"wear = {t['wear_rel']:.3f} (rel)")
+        if 'carcass_temp_C' in t:
+            parts.append(f"carcass = {t['carcass_temp_C']:.1f} °C")
+        if 'pressure_kPa' in t:
+            parts.append(f"pressure = {t['pressure_kPa']:.1f} kPa")
+        if 'wear_pct' in t:
+            parts.append(f"wear = {t['wear_pct']:.3f}")
         lines.append('  ' + '  |  '.join(parts))
 
     balance = tyres.get('_balance')
     if balance:
-        f_r = balance['front_vs_rear']
-        l_r = balance['left_vs_right']
+        f_r = balance['front_vs_rear_C']
+        l_r = balance['left_vs_right_C']
         lines.append(
             f"\n  Balance (inner temp): "
-            f"Front vs Rear = {f_r:+.3f}  |  Left vs Right = {l_r:+.3f}"
+            f"Front vs Rear = {f_r:+.1f} °C  |  Left vs Right = {l_r:+.1f} °C"
         )
-        if f_r < -0.05:
-            lines.append('  → Rears significantly hotter than fronts (relative)')
-        elif f_r > 0.05:
-            lines.append('  → Fronts significantly hotter than rears (relative)')
+        if f_r < -5:
+            lines.append('  → Rears significantly hotter than fronts')
+        elif f_r > 5:
+            lines.append('  → Fronts significantly hotter than rears')
 
     return '\n'.join(lines)
 
@@ -409,9 +424,12 @@ def _format_suspension(susp):
         label = code if len(code) == 2 else code.replace('_', ' ').title()
         lines.append(f"\n  {label}:")
         force_str = ''
-        if 'force_mean_rel' in s:
-            force_str = f"  |  force mean={s['force_mean_rel']:.3f} max={s['force_max_rel']:.3f} (rel)"
-        lines.append(f"    Position (rel): mean={s['mean_rel']:.3f}  std={s['std_rel']:.3f}{force_str}")
+        if 'force_mean_N' in s:
+            force_str = f"  |  force mean={s['force_mean_N']:.0f} N  max={s['force_max_N']:.0f} N"
+        lines.append(
+            f"    Travel: mean={s['mean_mm']:.2f} mm  std={s['std_mm']:.2f} mm"
+            f"  min={s['min_mm']:.2f} mm  max={s['max_mm']:.2f} mm{force_str}"
+        )
 
     return '\n'.join(lines) if lines else 'No suspension data.'
 
@@ -420,10 +438,21 @@ def _format_ride_heights(rh):
     lines = []
     for code in ['FL', 'FR', 'RL', 'RR']:
         r = rh.get(code)
-        if r:
-            lines.append(
-                f"  {code}: mean={r['mean_rel']:.3f}  std={r['std_rel']:.3f}"
-            )
+        if not r:
+            continue
+        pct = r['pct_below_25mm']
+        if pct >= 15:
+            below_str = f"  ⚠ {pct:.1f}% below 25mm — significant"
+        elif pct >= 5:
+            below_str = f"  △ {pct:.1f}% below 25mm — monitor"
+        elif pct > 0:
+            below_str = f"  {pct:.1f}% below 25mm (brief spikes — normal)"
+        else:
+            below_str = ''
+        lines.append(
+            f"  {code}: mean={r['mean_mm']:.1f} mm  "
+            f"min={r['min_mm']:.1f} mm  max={r['max_mm']:.1f} mm{below_str}"
+        )
     return '\n'.join(lines) if lines else 'No ride height data.'
 
 
@@ -442,9 +471,9 @@ def _format_camber(camber):
 
 def _format_packer_analysis(packer):
     lines = [
-        'Percentage of lap where suspension position is near its minimum (relative scale).',
-        'Flag thresholds: possible ≥ 5%, likely ≥ 15%.',
-        'Note: 3rd spring near-min on straights is expected/desirable for LMP2 and Hypercar.',
+        'Percentage of lap where suspension position is within 0.5 mm of its observed minimum.',
+        'That minimum is the packer contact point. Flag thresholds: possible ≥ 5%, likely ≥ 15%.',
+        'Note: 3rd spring packer contact on straights is expected/desirable for LMP2 and Hypercar.',
         '',
     ]
     for code in ['FL', 'FR', 'RL', 'RR', 'front_3rd', 'rear_3rd']:
@@ -454,7 +483,10 @@ def _format_packer_analysis(packer):
         label = code if len(code) == 2 else code.replace('_', ' ').title()
         flag = p['flag']
         symbol = '⚠' if flag == 'likely' else ('△' if flag == 'possible' else '✓')
-        lines.append(f"  {label}: {p['pct_near_min']:.1f}% near min  [{symbol} {flag}]")
+        lines.append(
+            f"  {label}: {p['pct_at_packer']:.1f}% at packer  "
+            f"(min observed = {p['min_mm']:.2f} mm)  [{symbol} {flag}]"
+        )
     return '\n'.join(lines)
 
 
@@ -480,17 +512,17 @@ def _format_targeted_extra(extra, categories):
 
     brakes = extra.get('brake_detail')
     if brakes:
-        lines.append('\nBrake pressure and temp per wheel (lap-wide, relative):')
+        lines.append('\nBrake pressure (% pedal input) and temp per wheel (lap-wide):')
         for code in ['FL', 'FR', 'RL', 'RR']:
             b = brakes.get(code, {})
             if b:
                 parts = [f'  {code}:']
-                if 'pressure_rel' in b:
-                    p = b['pressure_rel']
-                    parts.append(f"pressure mean={p['mean']:.3f} max={p['max']:.3f}")
-                if 'temp_rel' in b:
-                    t = b['temp_rel']
-                    parts.append(f"temp mean={t['mean']:.3f} max={t['max']:.3f}")
+                if 'pressure_pct' in b:
+                    p = b['pressure_pct']
+                    parts.append(f"pressure mean={p['mean']:.1f}% max={p['max']:.1f}%")
+                if 'temp_C' in b:
+                    t = b['temp_C']
+                    parts.append(f"temp mean={t['mean']:.0f} °C max={t['max']:.0f} °C")
                 lines.append('  '.join(parts))
 
     lockup = extra.get('lockup_analysis')
@@ -506,23 +538,23 @@ def _format_targeted_extra(extra, categories):
 
     wheel_speeds = extra.get('wheel_rot_speeds')
     if wheel_speeds:
-        lines.append('\nWheel rot speeds (lap-wide, relative — for slip/spin comparison):')
+        lines.append('\nWheel rot speeds (lap-wide — compare wheels against each other for slip/spin):')
         for code in ['FL', 'FR', 'RL', 'RR']:
             w = wheel_speeds.get(code)
             if w:
-                lines.append(f"  {code}: mean={w['mean']:.3f}  std={w['std']:.3f}")
+                lines.append(f"  {code}: mean={w['mean']:.2f}  std={w['std']:.2f}")
 
     patch = extra.get('patch_velocities')
     if patch:
-        lines.append('\nTyre patch velocities (relative — longitudinal and lateral slip):')
+        lines.append('\nTyre patch velocities (longitudinal and lateral slip):')
         for code in ['FL', 'FR', 'RL', 'RR']:
             p = patch.get(code, {})
             if p:
                 parts = [f'  {code}:']
-                if 'long_slip_rel' in p:
-                    parts.append(f"long slip mean={p['long_slip_rel']['mean']:.3f} max={p['long_slip_rel']['max']:.3f}")
-                if 'lat_slip_rel' in p:
-                    parts.append(f"lat slip mean={p['lat_slip_rel']['mean']:.3f} max={p['lat_slip_rel']['max']:.3f}")
+                if 'long_slip' in p:
+                    parts.append(f"long slip mean={p['long_slip']['mean']:.3f} max={p['long_slip']['max']:.3f}")
+                if 'lat_slip' in p:
+                    parts.append(f"lat slip mean={p['lat_slip']['mean']:.3f} max={p['lat_slip']['max']:.3f}")
                 lines.append('  '.join(parts))
 
     bumps = extra.get('bump_detail')
@@ -532,11 +564,11 @@ def _format_targeted_extra(extra, categories):
             b = bumps.get(code, {})
             if b:
                 parts = [f'  {code}:']
-                if 'susp_force_rel' in b:
-                    f_ = b['susp_force_rel']
-                    parts.append(f"susp force mean={f_['mean']:.3f} max={f_['max']:.3f}")
-                if 'tyre_deflection_rel' in b:
-                    d = b['tyre_deflection_rel']
+                if 'susp_force_N' in b:
+                    f_ = b['susp_force_N']
+                    parts.append(f"susp force mean={f_['mean']:.0f} N  max={f_['max']:.0f} N")
+                if 'tyre_deflection' in b:
+                    d = b['tyre_deflection']
                     parts.append(f"tyre deflection mean={d['mean']:.3f} max={d['max']:.3f}")
                 lines.append('  '.join(parts))
 

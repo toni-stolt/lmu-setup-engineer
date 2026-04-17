@@ -213,87 +213,48 @@ optimisation alone is insufficient.
 - Camber advice is uncertain territory — do not be overconfident. Flag as a suggestion to test
   rather than a definitive fix. This section needs more research before strong advice is given.
 
-## Current Status (2026-04-12)
-**Deployed and working end-to-end.**
+## Current Status (2026-04-14)
+**Deployed and working end-to-end. Local testing confirmed working.**
 - Backend live on Render.com: `https://lmu-setup-engineer.onrender.com`
 - Frontend live on Netlify
-- Full flow works: upload .ld → select lap → describe issue → get AI advice
+- Full flow works: upload .ld → select car class → select lap → describe issue → get AI advice
 
-### Session progress (2026-04-12) — prompt optimisation phase
+### What is complete and working
+- **ldparser scaling bug fixed** (`ld_reader.py`): all channels deliver real physical units
+  (mm, kPa, °C, N). Formula: `raw * mul / (scale * 10^dec) + shift`. Bypasses ldparser entirely.
+- **All analyzers use physical units** (`telemetry_analyzer.py`): `_mm`, `_C`, `_kPa`, `_N` keys throughout.
+- **`prompt_builder.py` fully updated** to physical unit keys. All formatters correct.
+- **Car class dropdown** added to frontend (GT3 / LMP2 / Hypercar). Required field. Passed to backend and included in prompt session header.
+- **Bottoming out thresholds** calibrated: < 5% = normal/desirable, 5–15% = monitor, > 15% = flag.
+- **SYSTEM_PROMPT** contains full LMU knowledge: packer detection, ride height, TC, ABS 9, brake lockup, 3rd spring, camber, problem-solution matrix.
+- **Test file**: `2026-04-02 - 18-44-51 - Paul Ricard - 1A - P1.ld` (Hypercar, project root)
 
-**Completed this session:**
-
-1. **Phase 1 — Issue categories finalised:**
-   - 5 categories: Understeer / Oversteer & snap / Traction & exits / Braking & rotation / Bumps & kerbs
-   - Ride height baked into ALL categories as a mandatory foundation check (not a separate category)
-   - Car classes: GT3, LMP2, Hypercar (LMP3 deferred)
-
-2. **Phase 2 — Knowledge gathering (substantial, documented in this file):**
-   - Class-specific differences table (ABS, TC, brake migration, ride height, 3rd spring)
-   - Braking knowledge: ABS 9 rule for GT3, TC settings, brake pressure guidance, lockup diagnosis priority
-   - Ride height & packer knowledge: 25mm threshold, packer detection logic, straight vs corner distinction
-   - 3rd spring: LMP2 (front stiffness only, no dampers) vs Hypercar (full control)
-   - PDF extracted: problem-solution matrix, tyre wear table, key setup theory
-   - Camber: LMU-specific guidance (near-minimum for prototypes, more active for GT3)
-   - Confirmed live channels: Wheel Rot Speed, Brake Pressure per wheel, Susp Force,
-     Body Pitch/Roll, Long/Lat Patch Vel, Vertical Tyre Deflection, Tyre Pressure per wheel
-
-3. **Option A (quick win) — SYSTEM_PROMPT rewritten** in `backend/prompt_builder.py`:
-   - Full car class knowledge section (GT3 / LMP2 / Hypercar)
-   - Ride height / packer foundation check as step 1 of every response
-   - TC settings, ABS 9, brake lockup diagnosis logic
-   - Problem-solution quick-reference matrix
-   - Updated rules and telemetry data notes
-
-4. **`backend/telemetry_analyzer.py` updated:**
-   - `packer_analysis()` — new, always runs, flags suspension channels spending time near minimum
-   - `_lockup_detection()` — new, compares wheel rot speeds during braking to identify locking wheels
-   - `suspension_summary()` — now includes Susp Force (mean + max) per corner
-   - `base_summary()` — now includes packer_analysis and body_attitude (pitch/roll in radians)
-   - `targeted_analysis()` — braking: adds lockup detection; traction: adds wheel rot speeds + patch velocities
-
-5. **`backend/prompt_builder.py` updated:**
-   - New `_format_packer_analysis()` and `_format_body_attitude()` formatters
-   - `_format_suspension()` now shows force data inline
-   - `_format_targeted_extra()` now shows lockup events, wheel rot speeds, patch velocities
-   - Packer section appears before suspension in the prompt (foundation check first)
-
-**Both test laps confirmed working (no errors):**
-- LMP2: `2026-01-20 - 17-54-41 - Circuit de la Sarthe - P1 kierros.ld`
-- GT3: `2026-01-16 - 20-52-54 - Interlagos 35.0.ld`
-
-**NEXT STEP — pick up here:**
-Run the backend locally and test the updated prompts against real lap files.
-Check if the AI advice quality has improved. Use this to identify gaps before starting
-the full modular refactor (Phase 3).
-
-To run backend locally:
+### Local development
 ```
-cd lmu-setup-engineer/backend
-python app.py
+python backend/app.py        # runs on port 5000
+# open frontend/index.html in browser
+# set API_BASE in frontend/js/app.js to http://localhost:5000
+# API key in backend/.env (GEMINI_API_KEY=...)
 ```
-Backend runs on port 5002 (AirPlay owns 5000/5001 on Mac).
-Then open the frontend in a browser (open frontend/index.html directly or via live server).
-The frontend currently points to the deployed Render URL — change API_BASE in js/app.js
-to http://localhost:5002 for local testing, then change it back before deploying.
+**Remember to revert `API_BASE` back to the Render URL before deploying.**
+
+### NEXT — pick up here
+Evaluate and improve prompt quality. The next big task is the **modular prompt system**:
+per car class × issue category knowledge injection (see Next Goals below).
 
 ---
 
 ## Next Goals (priority order)
 
-### 1. HIGHEST PRIORITY — Prompt quality
-The Gemini prompts in `prompt_builder.py` need to be heavily enriched with LMU-specific physics
-and setup knowledge so the advice is expert-level, not generic.
+### 1. HIGHEST PRIORITY — Prompt quality / modular prompts
+Car class dropdown is done. The next step is an **issue category dropdown** + modular prompt assembly.
 
 #### Design decision: modular prompts (NOT one giant master prompt)
-- Frontend requires user to select **car class** (GT3 / LMP2 / LMP3 / Hypercar)
-- Frontend requires user to select **issue category** (broad, 5–7 options e.g. mechanical grip /
-  aero & high-speed stability / ride & bump handling / tyre management / braking & rotation)
-- Backend assembles only the relevant knowledge sections for that combination
-- Rationale: keeps token count low (free tier), improves advice focus/quality, avoids paying for
-  irrelevant context (e.g. Hypercar damper theory on a GT3 ride height question)
-- This will take significant time — requires mapping out categories carefully and writing
-  high-quality, accurate prompts for each car class × issue type combination
+- Frontend: add **issue category** dropdown (5 options: Understeer / Oversteer & snap /
+  Traction & exits / Braking & rotation / Bumps & kerbs)
+- Backend assembles only the relevant knowledge sections for that car class × issue combination
+- Rationale: keeps token count low (free tier), improves advice focus, avoids irrelevant context
+- This will take significant time — requires writing high-quality prompts per combination
 - Do not rush this — prompt quality is the core value of the product
 
 ### 2. UI / Visual rework

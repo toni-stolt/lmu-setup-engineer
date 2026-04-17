@@ -27,7 +27,7 @@ def _fmt_laptime(seconds):
     s = seconds - m * 60
     return f'{m}:{s:06.3f}'
 
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
 
 app = Flask(__name__)
 CORS(app)
@@ -84,7 +84,8 @@ def analyze():
         return jsonify({'error': 'Description too long (max 1000 characters).'}), 400
 
     track_name = request.form.get('track_name', '').strip()
-    lap_index = request.form.get('lap_index')
+    car_class  = request.form.get('car_class', '').strip()
+    lap_index  = request.form.get('lap_index')
 
     # --- Save to temp file and parse ---
     try:
@@ -126,10 +127,11 @@ def analyze():
 
     # --- Build prompt and call AI ---
     meta = {
-        'driver':   ld_file.driver,
-        'vehicle':  ld_file.vehicle,
-        'venue':    track_name if track_name else ld_file.venue,
-        'datetime': ld_file.datetime,
+        'driver':    ld_file.driver,
+        'vehicle':   ld_file.vehicle,
+        'venue':     track_name if track_name else ld_file.venue,
+        'datetime':  ld_file.datetime,
+        'car_class': car_class,
     }
 
     try:
